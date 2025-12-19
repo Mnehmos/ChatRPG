@@ -272,7 +272,7 @@ All PRs must:
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) for details
+Proprietary - See [LICENSE](LICENSE) for details. Personal, non-commercial use permitted.
 
 ---
 
