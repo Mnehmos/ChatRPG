@@ -1,0 +1,37 @@
+{
+  "name": "rpg-lite-mcp",
+  "title": "RPG-Lite MCP Server",
+  "description": "Lightweight D&D 5e engine for ChatGPT applications - provides core tabletop RPG tools for AI Dungeon Masters including dice rolling, character management, combat encounters, and spatial mechanics.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Mnehmos",
+    "github": "Mnehmos"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Mnehmos/rpg-lite-mcp"
+  },
+  "license": "Proprietary",
+  "keywords": [
+    "mcp",
+    "chatgpt",
+    "openai",
+    "dnd",
+    "dungeons-and-dragons",
+    "rpg",
+    "ttrpg",
+    "game-master",
+    "ai-dm",
+    "5e"
+  ],
+  "categories": [
+    "games",
+    "entertainment",
+    "chatgpt-apps"
+  ],
+  "features": {
+    "tools": true,
+    "resources": false,
+    "prompts": false
+  }
+}
