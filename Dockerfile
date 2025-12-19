@@ -15,11 +15,8 @@ RUN npm install -g mcp-proxy
 COPY . .
 RUN npm run build
 
-# Make startup script executable
-RUN chmod +x start.sh
-
 # Expose port
 EXPOSE 8080
 
-# Use script to handle argument passing
-CMD ["./start.sh"]
+# Use ENTRYPOINT with shell to properly expand and pass arguments
+ENTRYPOINT ["/bin/sh", "-c", "exec mcp-proxy --port ${PORT:-8080} -- node dist/index.js"]
