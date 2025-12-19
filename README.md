@@ -1,4 +1,4 @@
-# RPG-Lite MCP Server
+# ChatRPG
 
 **Lightweight D&D 5e LLM-as-DM Engine**
 A Model Context Protocol (MCP) server providing 50 core D&D 5e tools for AI Dungeon Masters.
