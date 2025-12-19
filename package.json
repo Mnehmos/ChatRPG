@@ -17,10 +17,11 @@
   },
   "keywords": ["mcp", "dnd", "5e", "rpg", "llm", "ai", "dm"],
   "author": "Mnehmos",
-  "license": "MIT",
+  "license": "Proprietary",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "zod": "^3.23.0"
+    "zod": "^3.23.0",
+    "zod-to-json-schema": "^3.23.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
