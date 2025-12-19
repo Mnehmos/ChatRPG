@@ -15,11 +15,11 @@ RUN npm install -g mcp-proxy
 COPY . .
 RUN npm run build
 
-# Railway provides PORT dynamically, mcp-proxy uses --port flag
-# Default to 8080 if PORT not set
-ENV PORT=8080
+# Make startup script executable
+RUN chmod +x start.sh
+
+# Expose port
 EXPOSE 8080
 
-# mcp-proxy wraps the stdio-based MCP server into HTTP endpoints
-# Use shell form to expand $PORT variable
-CMD mcp-proxy --port $PORT -- node dist/index.js
+# Use script to handle argument passing
+CMD ["./start.sh"]
