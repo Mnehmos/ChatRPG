@@ -70,6 +70,13 @@ const httpServer = createServer(async (req, res) => {
     return;
   }
 
+  // ChatGPT Domain Verification
+  if (url.pathname === '/.well-known/openai-apps-challenge') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('z_slwoyiGAGJ3pMiud-a-0ZAkrG10ZAKP-sMSB1fLpw');
+    return;
+  }
+
   // Health check
   if (url.pathname === '/' || url.pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
