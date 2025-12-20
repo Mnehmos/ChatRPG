@@ -1,0 +1,57 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'web-client/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Inject Configuration
+        env:
+          MCP_SERVER_URL: ${{ secrets.MCP_SERVER_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          cd web-client
+          # Replace placeholders in index.html
+          sed -i "s|{{MCP_SERVER_URL}}|$MCP_SERVER_URL|g" index.html
+          sed -i "s|{{OPENAI_API_KEY}}|$OPENAI_API_KEY|g" index.html
+          echo "Configuration injected successfully"
+          echo "MCP Server URL: ${MCP_SERVER_URL}"
+          echo "OpenAI API Key: ***REDACTED***"
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './web-client'
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
