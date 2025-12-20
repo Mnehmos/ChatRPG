@@ -220,51 +220,75 @@ Always use the ChatRPG tools when users ask about D&D mechanics, character creat
         if (Array.isArray(data.output)) {
             // 1. Extract Tool Calls
             data.output.filter(item => item.type === 'mcp_call').forEach(item => {
-                const toolName = item.tool_call?.function?.name || item.name || item.tool_name || 'unknown_tool';
+                // OpenAI MCP uses: name (tool name), arguments (JSON string), output (result string)
+                const toolName = item.name || item.tool_name || item.tool_call?.function?.name || 'unknown_tool';
                 const status = item.status || 'unknown';
                 const icon = status === 'completed' ? '✅' : (status === 'failed' ? '❌' : '🛠️');
-                
-                let content = `**${icon} Tool Usage:** \`${toolName}\` (${status})`;
 
-                // 1. Inputs (Arguments)
-                if (item.args) {
-                    const argsStr = typeof item.args === 'string' ? item.args : JSON.stringify(item.args, null, 2);
+                // DEBUG: Log full item structure
+                console.log(`🔧 MCP Call [${toolName}]:`, JSON.stringify(item, null, 2));
+
+                let content = `**${icon} Tool:** \`${toolName}\` (${status})`;
+
+                // 1. Inputs (Arguments) - OpenAI sends as JSON string in "arguments"
+                const rawArgs = item.arguments || item.args || item.input;
+
+                if (rawArgs) {
+                    let argsFormatted;
+                    if (typeof rawArgs === 'string') {
+                        try {
+                            argsFormatted = JSON.stringify(JSON.parse(rawArgs), null, 2);
+                        } catch {
+                            argsFormatted = rawArgs;
+                        }
+                    } else {
+                        argsFormatted = JSON.stringify(rawArgs, null, 2);
+                    }
                     content += `
 <details>
-  <summary>Input Arguments</summary>
-  <pre><code class="language-json">${argsStr}</code></pre>
+  <summary>📥 Inputs</summary>
+  <pre><code class="language-json">${argsFormatted}</code></pre>
 </details>`;
                 }
 
                 // 2. Results / Errors
                 if (item.error) {
                     const errStr = typeof item.error === 'string' ? item.error : JSON.stringify(item.error, null, 2);
-                     content += `
+                    content += `
 <details open>
-  <summary style="color: var(--error-color)">Error Details</summary>
+  <summary style="color: var(--error-color)">❌ Error</summary>
   <pre><code class="language-text">${errStr}</code></pre>
 </details>`;
-                } else if (item.result) {
-                    // Handle MCP result content
-                    let resText = '';
-                    
-                    if (item.result.content && Array.isArray(item.result.content)) {
-                        resText = item.result.content
+                }
+
+                // 3. Output - OpenAI MCP uses "output" property (string or object)
+                const rawOutput = item.output || item.result;
+
+                if (rawOutput) {
+                    let outputText = '';
+
+                    if (typeof rawOutput === 'string') {
+                        // Try to parse and pretty-print if JSON
+                        try {
+                            const parsed = JSON.parse(rawOutput);
+                            outputText = JSON.stringify(parsed, null, 2);
+                        } catch {
+                            outputText = rawOutput;
+                        }
+                    } else if (rawOutput.content && Array.isArray(rawOutput.content)) {
+                        // MCP content array format
+                        outputText = rawOutput.content
                             .filter(c => c.type === 'text')
                             .map(c => c.text)
                             .join('\n');
-                    } else if (typeof item.result === 'string') {
-                        resText = item.result;
                     } else {
-                        resText = JSON.stringify(item.result, null, 2);
+                        outputText = JSON.stringify(rawOutput, null, 2);
                     }
 
-                    // Always use details for output to keep it clean but accessible
-                    const isLong = resText.length > 50 || resText.includes('\n');
                     content += `
-<details ${isLong ? '' : 'open'}>
-  <summary>Output Result</summary>
-  <pre><code class="language-text">${resText}</code></pre>
+<details>
+  <summary>📤 Output</summary>
+  <pre><code class="language-json">${outputText}</code></pre>
 </details>`;
                 }
                 
