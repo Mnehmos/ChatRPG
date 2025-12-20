@@ -134,7 +134,7 @@ class ChatApp {
                 'Authorization': `Bearer ${window.CHATRPG_CONFIG.openaiApiKey}`
             },
             body: JSON.stringify({
-                model: 'gpt-5',
+                model: 'gpt-5-nano-2025-08-07',
                 input: fullInput,
                 tools: [
                     {
