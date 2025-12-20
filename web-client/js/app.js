@@ -90,9 +90,11 @@ class ChatApp {
 
             // Handle response - text may have been streamed to UI already
             if (response) {
+                console.log('📬 Processing response items:', response.length, response);
                 if (Array.isArray(response)) {
                     // Handle list of response items (tools + text)
-                    response.forEach(item => {
+                    response.forEach((item, idx) => {
+                        console.log(`📬 Item ${idx}:`, item.type, item.role, '_alreadyRendered:', item._alreadyRendered);
                         // Skip text items if streaming already rendered them
                         if (item._alreadyRendered) {
                             // Just add to history, don't re-render
@@ -101,6 +103,7 @@ class ChatApp {
                                 content: item.content
                             });
                         } else {
+                            console.log(`🎨 RENDERING item ${idx} with role=${item.role}:`, item.content?.substring(0, 100));
                             this.addMessage(item.role || 'assistant', item.content);
                             if (item.type === 'text') {
                                 this.conversationHistory.push({
@@ -248,6 +251,10 @@ You are the DM. Don't explain - PLAY.`;
         }
 
         if (Array.isArray(data.output)) {
+            // DEBUG: Log MCP calls in output
+            const mcpCalls = data.output.filter(item => item.type === 'mcp_call');
+            console.log('🔧 MCP calls found in output:', mcpCalls.length, mcpCalls);
+
             // 1. Extract Tool Calls
             data.output.filter(item => item.type === 'mcp_call').forEach(item => {
                 // OpenAI MCP uses: name (tool name), arguments (JSON string), output (result string)
@@ -402,7 +409,7 @@ You are the DM. Don't explain - PLAY.`;
             }
         }
 
-        console.log('📝 Extracted items:', responseItems.length);
+        console.log('📝 Extracted items:', responseItems.length, responseItems.map(i => ({type: i.type, role: i.role, hasContent: !!i.content, alreadyRendered: i._alreadyRendered})));
         return responseItems;
     }
 
@@ -609,9 +616,11 @@ You are the DM. Don't explain - PLAY.`;
 
         if (role === 'system') {
             // System/Tool messages are pre-formatted HTML
-            contentDiv.innerHTML = content;
+            // Apply encoding repair to fix garbled Unicode from OpenAI API
+            contentDiv.innerHTML = this.repairEncoding(content);
         } else if (typeof content === 'string') {
             // Parse markdown-like formatting for standard messages
+            // (formatMessage already calls repairEncoding)
             contentDiv.innerHTML = this.formatMessage(content);
         } else {
             contentDiv.textContent = JSON.stringify(content, null, 2);
@@ -655,7 +664,42 @@ You are the DM. Don't explain - PLAY.`;
         this.addMessage('assistant', `❌ Error: ${message}`);
     }
 
+    /**
+     * Repair double-encoded UTF-8 text.
+     * This fixes the issue where UTF-8 characters get interpreted as Latin-1/Windows-1252
+     * and then re-encoded, causing garbled output like "Ã¢â€¢Â" instead of "•"
+     */
+    repairEncoding(text) {
+        if (!text || typeof text !== 'string') return text;
+
+        // Check if text contains common double-encoding patterns
+        // These are UTF-8 sequences that were decoded as Windows-1252
+        const hasDoubleEncoding = /Ã[¢£€¡]|â€[™š›œžŸ¦¹""|â€¢|Â[·°±²³´¶¸¼½¾]/.test(text);
+
+        if (!hasDoubleEncoding) return text;
+
+        try {
+            // Convert the string to bytes as if it were Latin-1, then decode as UTF-8
+            // This reverses the double-encoding
+            const bytes = new Uint8Array([...text].map(c => c.charCodeAt(0) & 0xFF));
+            const decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+
+            // Verify the repair worked (should have fewer bytes and proper characters)
+            if (decoded && decoded.length < text.length * 0.9) {
+                console.log('🔧 Repaired encoding:', text.substring(0, 50), '→', decoded.substring(0, 50));
+                return decoded;
+            }
+        } catch (e) {
+            console.warn('Encoding repair failed:', e);
+        }
+
+        return text;
+    }
+
     formatMessage(text) {
+        // First repair any encoding issues
+        text = this.repairEncoding(text);
+
         // Simple formatting for code blocks and line breaks
         return text
             .replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')

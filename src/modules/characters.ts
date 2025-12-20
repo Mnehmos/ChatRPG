@@ -852,19 +852,31 @@ export function createCharacter(input: CreateCharacterInput): {
   ];
 
   // Calculate custom resource if class has one
+  // NOTE: Skip "Spell Slots" as a custom resource for spellcasting classes -
+  // they use the actual spell slot system (manage_spell_slots) instead
   let resource: Character['resource'];
+  const resourceName = input.customClass?.resourceName;
+  const isSpellSlotResource = resourceName?.toLowerCase().includes('spell') &&
+                              resourceName?.toLowerCase().includes('slot');
+  const classIsSpellcaster = getSpellcastingType(input.class, input.customClass) !== 'none';
+
   if (input.customClass?.resourceName && input.customClass?.resourceMax !== undefined) {
-    const resourceMax = calculateResourceMax(
-      input.customClass.resourceMax,
-      input.level,
-      input.customClass.resourceScaling
-    );
-    
-    resource = {
-      name: input.customClass.resourceName,
-      current: resourceMax,
-      max: resourceMax,
-    };
+    // Skip spell slot resources for spellcasting classes - they use the real spell slot system
+    if (isSpellSlotResource && classIsSpellcaster) {
+      console.warn(`[ChatRPG] Skipping custom resource "${resourceName}" for ${input.class} - use manage_spell_slots instead`);
+    } else {
+      const resourceMax = calculateResourceMax(
+        input.customClass.resourceMax,
+        input.level,
+        input.customClass.resourceScaling
+      );
+
+      resource = {
+        name: input.customClass.resourceName,
+        current: resourceMax,
+        max: resourceMax,
+      };
+    }
   }
 
   // Build character object

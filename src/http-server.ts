@@ -72,7 +72,7 @@ const httpServer = createServer(async (req, res) => {
 
   // Health check
   if (url.pathname === '/' || url.pathname === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ status: 'ok', server: 'rpg-lite-mcp', version: '0.1.0' }));
     return;
   }
