@@ -1,15 +1,16 @@
 /**
  * Core Types - Shared Enums & Interfaces
- * Menu-Driven Design: Use enums for dropdowns
+ * Menu-Driven Design: Use enums for dropdowns with fuzzy matching
  */
 
 import { z } from 'zod';
+import { fuzzyEnum } from './fuzzy-enum.js';
 
 // ============================================================
 // D&D 5e ENUMS (Menu-Driven)
 // ============================================================
 
-export const ConditionSchema = z.enum([
+export const ConditionSchema = fuzzyEnum([
   'blinded',
   'charmed',
   'deafened',
@@ -25,10 +26,10 @@ export const ConditionSchema = z.enum([
   'stunned',
   'unconscious',
   'exhaustion',
-]);
+] as const, 'condition');
 export type Condition = z.infer<typeof ConditionSchema>;
 
-export const DamageTypeSchema = z.enum([
+export const DamageTypeSchema = fuzzyEnum([
   'slashing',
   'piercing',
   'bludgeoning',
@@ -42,13 +43,13 @@ export const DamageTypeSchema = z.enum([
   'radiant',
   'force',
   'psychic',
-]);
+] as const, 'damageType');
 export type DamageType = z.infer<typeof DamageTypeSchema>;
 
-export const AbilitySchema = z.enum(['str', 'dex', 'con', 'int', 'wis', 'cha']);
+export const AbilitySchema = fuzzyEnum(['str', 'dex', 'con', 'int', 'wis', 'cha'] as const, 'ability');
 export type Ability = z.infer<typeof AbilitySchema>;
 
-export const SkillSchema = z.enum([
+export const SkillSchema = fuzzyEnum([
   'acrobatics',
   'animal_handling',
   'arcana',
@@ -67,10 +68,10 @@ export const SkillSchema = z.enum([
   'sleight_of_hand',
   'stealth',
   'survival',
-]);
+] as const, 'skill');
 export type Skill = z.infer<typeof SkillSchema>;
 
-export const ActionTypeSchema = z.enum([
+export const ActionTypeSchema = fuzzyEnum([
   'attack',
   'cast_spell',
   'dash',
@@ -85,26 +86,26 @@ export const ActionTypeSchema = z.enum([
   'use_special_ability',
   'shove',
   'grapple',
-]);
+] as const, 'actionType');
 export type ActionType = z.infer<typeof ActionTypeSchema>;
 
 // Action Economy (ADR-001)
-export const ActionCostSchema = z.enum([
+export const ActionCostSchema = fuzzyEnum([
   'action',
   'bonus_action',
   'reaction',
   'free',
   'movement',
-]);
+] as const, 'actionCost');
 export type ActionCost = z.infer<typeof ActionCostSchema>;
 
 // Weapon Categories (ADR-001)
-export const WeaponTypeSchema = z.enum([
+export const WeaponTypeSchema = fuzzyEnum([
   'melee',
   'ranged',
   'melee_finesse',
   'ranged_thrown',
-]);
+] as const, 'weaponType');
 export type WeaponType = z.infer<typeof WeaponTypeSchema>;
 
 // Attack Result (ADR-001)
@@ -116,20 +117,20 @@ export const AttackResultSchema = z.enum([
 ]);
 export type AttackResult = z.infer<typeof AttackResultSchema>;
 
-export const SizeSchema = z.enum([
+export const SizeSchema = fuzzyEnum([
   'tiny',
   'small',
   'medium',
   'large',
   'huge',
   'gargantuan',
-]);
+] as const, 'size');
 export type Size = z.infer<typeof SizeSchema>;
 
-export const CoverSchema = z.enum(['none', 'half', 'three_quarters', 'full']);
+export const CoverSchema = fuzzyEnum(['none', 'half', 'three_quarters', 'full'] as const, 'cover');
 export type Cover = z.infer<typeof CoverSchema>;
 
-export const LightSchema = z.enum(['bright', 'dim', 'darkness', 'magical_darkness']);
+export const LightSchema = fuzzyEnum(['bright', 'dim', 'darkness', 'magical_darkness'] as const, 'lighting');
 export type Light = z.infer<typeof LightSchema>;
 
 // ============================================================
@@ -143,7 +144,7 @@ export const PositionSchema = z.object({
 });
 export type Position = z.infer<typeof PositionSchema>;
 
-export const AoeShapeSchema = z.enum(['line', 'cone', 'cube', 'sphere', 'cylinder']);
+export const AoeShapeSchema = fuzzyEnum(['line', 'cone', 'cube', 'sphere', 'cylinder'] as const, 'aoeShape');
 export type AoeShape = z.infer<typeof AoeShapeSchema>;
 
 // ============================================================

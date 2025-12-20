@@ -74,7 +74,7 @@ const TERRAIN_VALUES = [
 const TerrainSchema = fuzzyEnum(TERRAIN_VALUES, 'terrain');
 
 /** Connection types between locations */
-const ConnectionTypeSchema = z.enum([
+const ConnectionTypeSchema = fuzzyEnum([
   'door',
   'passage',
   'stairs',
@@ -84,7 +84,7 @@ const ConnectionTypeSchema = z.enum([
 ]);
 
 /** Operation types for manage_location */
-const LocationOperationSchema = z.enum([
+const LocationOperationSchema = fuzzyEnum([
   'create',
   'get',
   'update',
@@ -805,7 +805,7 @@ let partyState: PartyState = {
 // ============================================================
 
 /** Operation types for move_party */
-const MovePartyOperationSchema = z.enum(['move', 'status', 'history']);
+const MovePartyOperationSchema = fuzzyEnum(['move', 'status', 'history'] as const);
 
 /** Move operation schema */
 const moveOperationSchema = z.object({
@@ -1162,7 +1162,7 @@ export async function moveParty(input: unknown): Promise<{ content: { type: 'tex
 // ============================================================
 
 /** Party role types */
-const PartyRoleSchema = z.enum([
+const PartyRoleSchema = fuzzyEnum([
   'leader',
   'scout',
   'healer',
@@ -1656,7 +1656,7 @@ export function clearPartyMembers(): void {
 // ============================================================
 
 /** Item types */
-const ItemTypeSchema = z.enum([
+const ItemTypeSchema = fuzzyEnum([
   'weapon',
   'armor',
   'shield',
@@ -1668,7 +1668,7 @@ const ItemTypeSchema = z.enum([
 ]);
 
 /** Equipment slots */
-const EquipmentSlotSchema = z.enum([
+const EquipmentSlotSchema = fuzzyEnum([
   'mainHand',
   'offHand',
   'armor',
@@ -2359,7 +2359,7 @@ export function clearInventoryData(): void {
 // ============================================================
 
 /** Importance levels for notes */
-const ImportanceSchema = z.enum(['low', 'medium', 'high', 'critical']);
+const ImportanceSchema = fuzzyEnum(['low', 'medium', 'high', 'critical'] as const);
 
 /** Note interface */
 interface Note {
@@ -2658,8 +2658,8 @@ export function clearAllNotes(): void {
  * Schema for get_session_context tool
  */
 export const getSessionContextSchema = z.object({
-  include: z.array(z.enum(['location', 'party', 'notes', 'combat', 'summary'])).optional(),
-  format: z.enum(['detailed', 'compact', 'brief']).optional(),
+  include: z.array(fuzzyEnum(['location', 'party', 'notes', 'combat', 'summary'] as const)).optional(),
+  format: fuzzyEnum(['detailed', 'compact', 'brief'] as const, 'verbosity').optional(),
   maxNotes: z.number().int().positive().optional(),
   includeTimestamps: z.boolean().optional(),
 });

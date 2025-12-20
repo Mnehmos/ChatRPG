@@ -12,7 +12,8 @@
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import { createBox, centerText, BOX } from './ascii-art.js';
-import { AbilitySchema, ConditionSchema, DamageTypeSchema } from '../types.js';
+import { AbilitySchema, ConditionSchema, DamageTypeSchema, AoeShapeSchema } from '../types.js';
+import { fuzzyEnum } from '../fuzzy-enum.js';
 
 // ============================================================
 // CONSTANTS
@@ -104,7 +105,7 @@ const checkOperationSchema = z.object({
   operation: z.literal('check'),
   damage: z.number(),
   conSaveModifier: z.number().optional(),
-  rollMode: z.enum(['normal', 'advantage', 'disadvantage']).optional(),
+  rollMode: fuzzyEnum(['normal', 'advantage', 'disadvantage'] as const, 'rollMode').optional(),
   manualRoll: z.number().min(MIN_MANUAL_ROLL).max(MAX_MANUAL_ROLL).optional(),
   manualRolls: z.array(z.number().min(MIN_MANUAL_ROLL).max(MAX_MANUAL_ROLL)).length(2).optional(),
 });
@@ -981,7 +982,7 @@ export const useScrollSchema = z.object({
 
   // Arcana check for higher-level scrolls
   arcanaBonus: z.number().optional(),
-  rollMode: z.enum(['normal', 'advantage', 'disadvantage']).optional(),
+  rollMode: fuzzyEnum(['normal', 'advantage', 'disadvantage'] as const, 'rollMode').optional(),
   manualRoll: z.number().min(1).max(20).optional(),
   manualRolls: z.array(z.number().min(1).max(20)).length(2).optional(),
 
@@ -1145,7 +1146,7 @@ function resolveArcanaRoll(
 /**
  * Spell schools for synthesized spells
  */
-const SpellSchoolSchema = z.enum([
+const SpellSchoolSchema = fuzzyEnum([
   'abjuration',
   'conjuration',
   'divination',
@@ -1159,12 +1160,12 @@ const SpellSchoolSchema = z.enum([
 /**
  * AoE shapes for synthesized spells
  */
-const AoeShapeSchema = z.enum(['sphere', 'cone', 'line', 'cube', 'cylinder']);
+// Using AoeShapeSchema from types.ts
 
 /**
  * Effect types for synthesized spells
  */
-const EffectTypeSchema = z.enum(['damage', 'healing', 'control', 'utility', 'summon']);
+const EffectTypeSchema = fuzzyEnum(['damage', 'healing', 'control', 'utility', 'summon'] as const);
 
 /**
  * Proposed spell effect schema
@@ -1219,7 +1220,7 @@ export const synthesizeSpellSchema = z.object({
 
   // Arcana check modifiers
   arcanaBonus: z.number().optional(),
-  rollMode: z.enum(['normal', 'advantage', 'disadvantage']).optional(),
+  rollMode: fuzzyEnum(['normal', 'advantage', 'disadvantage'] as const, 'rollMode').optional(),
   manualRoll: z.number().min(1).max(20).optional(),
   manualRolls: z.array(z.number().min(1).max(20)).length(2).optional(),
 
