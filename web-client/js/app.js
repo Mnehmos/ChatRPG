@@ -117,25 +117,25 @@ class ChatApp {
     }
 
     async callOpenAI(userMessage) {
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        // Build conversation context
+        const conversationContext = this.conversationHistory
+            .slice(-5) // Keep last 5 exchanges for context
+            .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
+            .join('\n');
+
+        const fullInput = conversationContext
+            ? `${conversationContext}\nUser: ${userMessage}`
+            : userMessage;
+
+        const response = await fetch('https://api.openai.com/v1/responses', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${window.CHATRPG_CONFIG.openaiApiKey}`
             },
             body: JSON.stringify({
-                model: 'gpt-4o',
-                messages: [
-                    {
-                        role: 'system',
-                        content: 'You are a helpful D&D 5e assistant powered by the ChatRPG MCP server. Use the available tools to help users manage characters, run combat encounters, track inventory, and more. When users ask about D&D mechanics, character creation, or campaign management, use the appropriate ChatRPG tools.'
-                    },
-                    ...this.conversationHistory.slice(-10), // Keep last 10 messages for context
-                    {
-                        role: 'user',
-                        content: userMessage
-                    }
-                ],
+                model: 'gpt-5',
+                input: fullInput,
                 tools: [
                     {
                         type: 'mcp',
@@ -144,9 +144,7 @@ class ChatApp {
                         server_url: window.CHATRPG_CONFIG.mcpServerUrl,
                         require_approval: 'never'
                     }
-                ],
-                temperature: 0.7,
-                max_tokens: 2000
+                ]
             })
         });
 
@@ -157,15 +155,8 @@ class ChatApp {
 
         const data = await response.json();
 
-        // Extract assistant's response
-        const assistantMessage = data.choices[0]?.message;
-
-        if (assistantMessage?.tool_calls) {
-            // If there were tool calls, the final content should include results
-            console.log('Tool calls made:', assistantMessage.tool_calls);
-        }
-
-        return assistantMessage?.content || 'No response generated.';
+        // Extract assistant's response using the new response format
+        return data.output_text || 'No response generated.';
     }
 
     updateInputState() {
