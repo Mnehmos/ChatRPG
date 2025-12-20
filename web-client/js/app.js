@@ -190,49 +190,56 @@ Always use the ChatRPG tools when users ask about D&D mechanics, character creat
             });
         }
 
+        // Extended Debugging
+        if (Array.isArray(data.output)) {
+            console.log('📦 Output Array Detailed:', JSON.stringify(data.output, null, 2));
+        }
+
         // Extract assistant's response
         let responseText = null;
 
-        // OpenAI Responses API structure: data.output is an array of items
         if (Array.isArray(data.output)) {
-            // Find the item that is a message
-            const messageItem = data.output.find(item => item.type === 'message');
+            // Strategy: Look for the last item that looks like a message/content
+            // Standard MCP/Responses output might contain tool_definitions, tool_calls, tool_results, and messages.
+            // We want the final message content caused by the loop (or the only message).
             
-            if (messageItem) {
-                // Content can be a string or an array of content parts
-                if (typeof messageItem.content === 'string') {
-                    responseText = messageItem.content;
-                } else if (Array.isArray(messageItem.content)) {
-                    // Concatenate text parts if it's an array
-                    responseText = messageItem.content
-                        .filter(part => part.type === 'text')
-                        .map(part => part.text)
+            const contentItems = data.output.filter(item => {
+                // Check multiple indicators of a message
+                return item.type === 'message' || 
+                       item.role === 'assistant' || 
+                       (item.content && (typeof item.content === 'string' || Array.isArray(item.content)));
+            });
+
+            if (contentItems.length > 0) {
+                // Take the last meaningful content item
+                const lastItem = contentItems[contentItems.length - 1];
+                
+                if (typeof lastItem.content === 'string') {
+                    responseText = lastItem.content;
+                } else if (Array.isArray(lastItem.content)) {
+                    // Combine text parts
+                    responseText = lastItem.content
+                        .filter(part => part.type === 'text' || typeof part === 'string')
+                        .map(part => typeof part === 'string' ? part : part.text)
+                        .filter(text => text) // remove empty
                         .join('\n');
-                }
-            } else {
-                console.warn('⚠️ No message item found in data.output array');
-                // Check if we just got a tool list (debugging)
-                const toolList = data.output.find(item => item.type === 'mcp_list_tools');
-                if (toolList) {
-                    console.log('🛠️ Response contained tool definitions but no message.');
                 }
             }
         } 
-        // Fallback for string output (some API versions)
-        else if (typeof data.output === 'string') {
-            responseText = data.output;
+        
+        // Legacy/Fallback parsing
+        if (!responseText) {
+             if (typeof data.output === 'string') {
+                responseText = data.output;
+            } else {
+                responseText = data.output_text ||
+                              data.choices?.[0]?.message?.content ||
+                              data.choices?.[0]?.text;
+            }
         }
 
-        // Fallbacks for legacy/alternative formats
         if (!responseText) {
-            responseText = data.output_text ||
-                          data.choices?.[0]?.message?.content ||
-                          data.choices?.[0]?.text;
-        }
-
-        // Final fallback
-        if (!responseText) {
-            console.warn('⚠️ Could not extract response text from:', data);
+            console.warn('⚠️ Could not extract response text from:', JSON.stringify(data, null, 2));
             responseText = 'No text response generated. (Check console for details)';
         }
 
