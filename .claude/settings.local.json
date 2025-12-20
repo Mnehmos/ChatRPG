@@ -12,7 +12,13 @@
       "Bash(node:*)",
       "Bash(cat:*)",
       "Bash(npx vitest:*)",
-      "Bash(npx tsc)"
+      "Bash(npx tsc)",
+      "Bash(chmod:*)",
+      "Bash(git pull:*)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)"
     ],
     "deny": [],
     "ask": []

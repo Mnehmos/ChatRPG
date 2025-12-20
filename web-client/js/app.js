@@ -95,12 +95,29 @@ class ChatApp {
             this.removeMessage(loadingId);
 
             // Add assistant response
+            // Add assistant response
             if (response) {
-                this.addMessage('assistant', response);
-                this.conversationHistory.push({
-                    role: 'assistant',
-                    content: response
-                });
+                if (Array.isArray(response)) {
+                    // Handle list of response items (tools + text)
+                    response.forEach(item => {
+                        this.addMessage(item.role || 'assistant', item.content);
+                        
+                        // Only add text responses to history context to avoid confusing the LLM
+                        if (item.type === 'text') {
+                            this.conversationHistory.push({
+                                role: 'assistant',
+                                content: item.content
+                            });
+                        }
+                    });
+                } else {
+                    // Fallback for single string response
+                    this.addMessage('assistant', response);
+                    this.conversationHistory.push({
+                        role: 'assistant',
+                        content: response
+                    });
+                }
             }
 
             this.updateStatus('connected', 'Ready');
@@ -197,11 +214,25 @@ Always use the ChatRPG tools when users ask about D&D mechanics, character creat
             console.log('📦 Output Array Types:', types);
         }
 
-        // Extract assistant's response
-        let responseText = null;
+        // Extract content (Tool Calls & Text)
+        const responseItems = [];
 
         if (Array.isArray(data.output)) {
-             // 1. Try standard Message format (OpenAI Responses API)
+            // 1. Extract Tool Calls
+            data.output.filter(item => item.type === 'mcp_call').forEach(item => {
+                const toolName = item.tool_call?.function?.name || item.name || item.tool_name || 'unknown_tool';
+                const status = item.status || 'unknown';
+                const icon = status === 'completed' ? '✅' : (status === 'failed' ? '❌' : '🛠️');
+                
+                responseItems.push({
+                    type: 'tool',
+                    role: 'system', // Use system role for lighter styling
+                    content: `**${icon} Tool Usage:** \`${toolName}\` (${status})`
+                });
+            });
+
+            // 2. Extract Message Text
+            let responseText = null;
             const messageItem = data.output.find(item => item.type === 'message' || item.role === 'assistant');
             
             if (messageItem) {
@@ -211,45 +242,61 @@ Always use the ChatRPG tools when users ask about D&D mechanics, character creat
                     responseText = messageItem.content
                         .filter(part => part.type === 'text' || part.type === 'output_text' || typeof part === 'string')
                         .map(part => typeof part === 'string' ? part : part.text)
-                        .filter(text => text) // Filter out empty strings
+                        .filter(text => text)
                         .join('\n');
                 }
             }
 
-            // 2. Try looking for ANY item with 'text' or 'content' property if strict message check failed
+            // Fallback for text if standard message not found
             if (!responseText) {
                  const potentialContent = data.output.find(item => 
                     item.type !== 'mcp_list_tools' && 
-                    item.type !== 'reasoning' &&
+                    item.type !== 'reasoning' && 
+                    item.type !== 'mcp_call' &&
                     (item.content || item.text || item.message)
                 );
                 
                 if (potentialContent) {
-                    if (typeof potentialContent.content === 'string') responseText = potentialContent.content;
-                    else if (typeof potentialContent.text === 'string') responseText = potentialContent.text;
-                    else if (potentialContent.message && typeof potentialContent.message.content === 'string') responseText = potentialContent.message.content;
+                     if (typeof potentialContent.content === 'string') responseText = potentialContent.content;
+                     else if (typeof potentialContent.text === 'string') responseText = potentialContent.text;
+                     else if (potentialContent.message && typeof potentialContent.message.content === 'string') responseText = potentialContent.message.content;
                 }
+            }
+
+            if (responseText) {
+                responseItems.push({
+                    type: 'text',
+                    role: 'assistant',
+                    content: responseText
+                });
             }
         } 
         
-        // Legacy/Fallback parsing
-        if (!responseText) {
+        // Legacy/Fallback parsing (if no structured output extracted)
+        if (responseItems.length === 0) {
+            let responseText = null;
              if (typeof data.output === 'string') {
                 responseText = data.output;
             } else {
                 responseText = data.output_text ||
-                              data.choices?.[0]?.message?.content ||
-                              data.choices?.[0]?.text;
+                               data.choices?.[0]?.message?.content ||
+                               data.choices?.[0]?.text;
+            }
+            
+            if (responseText) {
+                 responseItems.push({ type: 'text', role: 'assistant', content: responseText });
+            } else {
+                console.warn('⚠️ Could not extract response text from:', JSON.stringify(data.output || data, null, 2));
+                responseItems.push({ 
+                    type: 'text', 
+                    role: 'assistant', 
+                    content: 'No text response generated. (Check console for details)' 
+                });
             }
         }
 
-        if (!responseText) {
-            console.warn('⚠️ Could not extract response text from:', JSON.stringify(data.output || data, null, 2));
-            responseText = 'No text response generated. (Check console for details)';
-        }
-
-        console.log('📝 Extracted response text length:', responseText ? responseText.length : 0);
-        return responseText;
+        console.log('📝 Extracted items:', responseItems.length);
+        return responseItems;
     }
 
     updateInputState() {
