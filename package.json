@@ -15,17 +15,28 @@
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage"
   },
-  "keywords": ["mcp", "dnd", "5e", "rpg", "llm", "ai", "dm", "chatgpt"],
+  "keywords": [
+    "mcp",
+    "dnd",
+    "5e",
+    "rpg",
+    "llm",
+    "ai",
+    "dm",
+    "chatgpt"
+  ],
   "author": "Mnehmos",
   "license": "Proprietary",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "ws": "^8.18.3",
     "zod": "^3.23.0",
     "zod-to-json-schema": "^3.23.0"
   },
   "devDependencies": {
     "@smithery/cli": "^1.4.6",
     "@types/node": "^20.0.0",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.0.0",
     "typescript": "^5.3.0",
     "vitest": "^2.0.0"

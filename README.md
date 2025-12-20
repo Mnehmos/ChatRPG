@@ -1,10 +1,10 @@
 # ChatRPG
 
 **Lightweight D&D 5e LLM-as-DM Engine**
-A Model Context Protocol (MCP) server providing 50 core D&D 5e tools for AI Dungeon Masters.
+A Model Context Protocol (MCP) server providing 35 core D&D 5e tools for AI Dungeon Masters.
 
-![Status](https://img.shields.io/badge/tests-96%2F96%20passing-brightgreen)
-![Progress](https://img.shields.io/badge/tools-7%2F50%20complete-blue)
+![Status](https://img.shields.io/badge/tests-599%2F599%20passing-brightgreen)
+![Progress](https://img.shields.io/badge/tools-18%2F35%20complete-blue)
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
 
 ---
@@ -58,23 +58,33 @@ The server will auto-start when Claude Desktop launches.
 
 ---
 
-## Available Tools (9/50)
+## Available Tools (18/35)
 
-### Combat Module (4)
+### Combat Module (9 tools - COMPLETE)
 
 - ✅ **roll_dice** - Standard dice notation with modifiers (`2d6+3`, `4d6kh3`)
-- ✅ **manage_condition** - Apply/remove D&D 5e conditions with duration tracking
 - ✅ **create_encounter** - Initialize combat encounters with participants and terrain
-- ✅ **execute_action** - Execute combat actions (attack, dash, disengage, dodge, grapple, shove) including opportunity attacks
+- ✅ **get_encounter** - Retrieve encounter state with filtering options
+- ✅ **execute_action** - Combat hub: attack, cast_spell, dash, disengage, dodge, grapple, shove
+- ✅ **advance_turn** - Turn management with condition ticking
+- ✅ **end_encounter** - Close encounter with XP/HP summary
+- ✅ **roll_death_save** - D&D 5e death save mechanics with visual tracker
+- ✅ **manage_condition** - Apply/remove D&D 5e conditions with duration tracking
+- ✅ **render_battlefield** - ASCII tactical map rendering
+- ✅ **modify_terrain** - Terrain hazards, obstacles, difficult terrain
 
-### Characters Module (4)
+### Characters Module (8 tools)
 
 - ✅ **create_character** - Full D&D 5e character creation with auto-calculated stats
-- ✅ **get_character** - Retrieve character by ID with rich formatting
-- ✅ **update_character** - Update character stats, HP, level, equipment with before/after comparison
-- ✅ **roll_check** - Perform skill checks, saving throws, and ability checks
+- ✅ **get_character** - Retrieve character by ID/name with filtering and listing
+- ✅ **update_character** - Update stats with before/after comparison, batch support
+- ✅ **delete_character** - Remove character with cascade cleanup
+- ✅ **roll_check** - Skill checks, saving throws, ability checks
+- ✅ **hp_delta** - Apply damage/healing with bloodied/death tracking
+- ✅ **take_rest** - Short/long rest mechanics with hit dice, spell slots
+- ✅ **manage_spell_slots** - D&D 5e spell slot management (full/half/third casters, warlock pact magic)
 
-### Spatial Module (1)
+### Spatial Module (1 tool)
 
 - ✅ **measure_distance** - Grid-based distance calculation (5e rules)
 
@@ -93,28 +103,29 @@ npm test -- --run
 npm run test:coverage
 ```
 
-**Current Status:** 250/250 tests passing across 12 test files
+**Current Status:** 599/599 tests passing across 22 test files
 
 ---
 
 ## Project Structure
 
 ```
-rpg-lite-mcp/
+ChatRPG/
 ├── src/
 │   ├── index.ts           # MCP server entry point
 │   ├── registry.ts        # Tool registration hub
 │   ├── types.ts           # Shared TypeScript types
+│   ├── websocket.ts       # Real-time battlefield broadcasting
 │   └── modules/
+│       ├── ascii-art.ts   # ASCII output rendering
 │       ├── dice.ts        # Dice rolling engine
-│       ├── characters.ts  # Character CRUD
+│       ├── characters.ts  # Character CRUD + spell slots
 │       ├── combat.ts      # Encounter management
-│       ├── spatial.ts     # Grid mechanics
-│       ├── magic.ts       # Spellcasting (planned)
-│       └── data.ts        # Session persistence (planned)
-├── tests/                 # Vitest test suites
+│       └── spatial.ts     # Grid mechanics
+├── tests/                 # Vitest test suites (22 files)
 ├── data/                  # Runtime JSON storage
 │   └── characters/        # Character persistence
+├── design docs/           # ADRs and design documentation
 └── dist/                  # Compiled output (npm run build)
 ```
 

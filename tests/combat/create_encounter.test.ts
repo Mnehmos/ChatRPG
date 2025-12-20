@@ -545,10 +545,24 @@ describe('create_encounter', () => {
       expect(text).toContain('Creature 12');
     });
 
-    it('should validate HP is positive', async () => {
+    it('should allow HP of 0 for dying/unconscious characters', async () => {
+      // HP = 0 is valid for death save scenarios
       const result = await handleToolCall('create_encounter', {
         participants: [
-          { id: 'invalid', name: 'Dead', hp: 0, maxHp: 20, position: { x: 0, y: 0 } },
+          { id: 'unconscious', name: 'Unconscious', hp: 0, maxHp: 20, position: { x: 0, y: 0 } },
+        ],
+      });
+
+      expect(result.isError).toBeUndefined();
+      const text = getTextContent(result);
+      expect(text).toContain('Unconscious');
+      expect(text).toContain('0/20');
+    });
+
+    it('should reject negative HP', async () => {
+      const result = await handleToolCall('create_encounter', {
+        participants: [
+          { id: 'invalid', name: 'Negative', hp: -5, maxHp: 20, position: { x: 0, y: 0 } },
         ],
       });
 

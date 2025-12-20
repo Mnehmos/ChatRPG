@@ -94,12 +94,12 @@ export const ActionTypeSchema = z.enum([
 
 ### 🔶 NEEDED (Can stub for Phase 1)
 
-| Tool | Priority | Used By |
-|------|----------|---------|
-| `advance_turn` | HIGH | Turn order, action economy reset |
-| `manage_spell_slots` | MEDIUM | cast_spell action |
-| `calculate_movement` | MEDIUM | Difficult terrain, speed mods |
-| `manage_inventory` | LOW | use_object, use_magic_item |
+| Tool | Priority | Status | Used By |
+|------|----------|--------|---------|
+| `advance_turn` | HIGH | ✅ DONE | Turn order, action economy reset |
+| `manage_spell_slots` | MEDIUM | ✅ DONE (44 tests) | cast_spell action |
+| `calculate_movement` | MEDIUM | | Difficult terrain, speed mods |
+| `manage_inventory` | LOW | | use_object, use_magic_item |
 
 ---
 

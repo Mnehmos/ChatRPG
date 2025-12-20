@@ -158,10 +158,17 @@ Based on Phase 1, all future tools will need:
 - Cover indicators (special symbols)
 ```
 
-**4. Magic Tools** (`manage_spell_slots`, `check_concentration`, `create_aura`)
+**4. Magic Tools** (`manage_spell_slots` ✅, `check_concentration`, `create_aura`)
 ```typescript
-// Expected output components:
-- Spell slot grids (●○○ for used/available)
+// manage_spell_slots IMPLEMENTED (44 tests):
+// - Spell slot visualization: ●●●○ (available/expended)
+// - Pact magic slots: ◆◆◇ (warlock-specific)
+// - Full/Half/Third caster progression by class
+// - Operations: view, expend, restore, set (DM override)
+// - Integration: take_rest restores, execute_action expends
+// - Batch support for party spell tracking
+
+// Future concentration/aura features:
 - Concentration indicators (special frames)
 - Aura radii (visual circles/squares on grid)
 - Spell effect descriptions (formatted boxes)
