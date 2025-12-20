@@ -192,37 +192,38 @@ Always use the ChatRPG tools when users ask about D&D mechanics, character creat
 
         // Extended Debugging
         if (Array.isArray(data.output)) {
-            console.log('📦 Output Array Detailed:', JSON.stringify(data.output, null, 2));
+            console.log('📦 Output Array Types:', data.output.map(item => item.type));
         }
 
         // Extract assistant's response
         let responseText = null;
 
         if (Array.isArray(data.output)) {
-            // Strategy: Look for the last item that looks like a message/content
-            // Standard MCP/Responses output might contain tool_definitions, tool_calls, tool_results, and messages.
-            // We want the final message content caused by the loop (or the only message).
+             // 1. Try standard Message format
+            const messageItem = data.output.find(item => item.type === 'message' || item.role === 'assistant');
             
-            const contentItems = data.output.filter(item => {
-                // Check multiple indicators of a message
-                return item.type === 'message' || 
-                       item.role === 'assistant' || 
-                       (item.content && (typeof item.content === 'string' || Array.isArray(item.content)));
-            });
-
-            if (contentItems.length > 0) {
-                // Take the last meaningful content item
-                const lastItem = contentItems[contentItems.length - 1];
-                
-                if (typeof lastItem.content === 'string') {
-                    responseText = lastItem.content;
-                } else if (Array.isArray(lastItem.content)) {
-                    // Combine text parts
-                    responseText = lastItem.content
+            if (messageItem) {
+                 if (typeof messageItem.content === 'string') {
+                    responseText = messageItem.content;
+                } else if (Array.isArray(messageItem.content)) {
+                    responseText = messageItem.content
                         .filter(part => part.type === 'text' || typeof part === 'string')
                         .map(part => typeof part === 'string' ? part : part.text)
-                        .filter(text => text) // remove empty
                         .join('\n');
+                }
+            }
+
+            // 2. Try looking for ANY item with 'text' or 'content' property if strict message check failed
+            if (!responseText) {
+                 const potentialContent = data.output.find(item => 
+                    item.type !== 'mcp_list_tools' && // Ignore the tool listing
+                    (item.content || item.text || item.message)
+                );
+                
+                if (potentialContent) {
+                    if (typeof potentialContent.content === 'string') responseText = potentialContent.content;
+                    else if (typeof potentialContent.text === 'string') responseText = potentialContent.text;
+                    else if (potentialContent.message && typeof potentialContent.message.content === 'string') responseText = potentialContent.message.content;
                 }
             }
         } 
@@ -238,12 +239,14 @@ Always use the ChatRPG tools when users ask about D&D mechanics, character creat
             }
         }
 
+        // FAILURE MODE: Dump JSON to UI
         if (!responseText) {
-            console.warn('⚠️ Could not extract response text from:', JSON.stringify(data, null, 2));
-            responseText = 'No text response generated. (Check console for details)';
+            console.warn('⚠️ Could not extract response text. Dumping raw data for user.');
+            const debugDump = JSON.stringify(data.output || data, null, 2);
+            responseText = `⚠️ **DEBUG: Parsing Failed**\n\nPlease copy this JSON and paste it to the developer:\n\n\`\`\`json\n${debugDump}\n\`\`\``;
         }
 
-        console.log('📝 Extracted response text:', responseText);
+        console.log('📝 Extracted response text:', responseText ? responseText.slice(0, 50) + '...' : 'null');
         return responseText;
     }
 
