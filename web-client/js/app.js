@@ -190,12 +190,51 @@ Always use the ChatRPG tools when users ask about D&D mechanics, character creat
             });
         }
 
-        // Extract assistant's response - try multiple possible fields
-        const responseText = data.output_text ||
-                            data.output ||
-                            data.choices?.[0]?.message?.content ||
-                            data.choices?.[0]?.text ||
-                            'No response generated.';
+        // Extract assistant's response
+        let responseText = null;
+
+        // OpenAI Responses API structure: data.output is an array of items
+        if (Array.isArray(data.output)) {
+            // Find the item that is a message
+            const messageItem = data.output.find(item => item.type === 'message');
+            
+            if (messageItem) {
+                // Content can be a string or an array of content parts
+                if (typeof messageItem.content === 'string') {
+                    responseText = messageItem.content;
+                } else if (Array.isArray(messageItem.content)) {
+                    // Concatenate text parts if it's an array
+                    responseText = messageItem.content
+                        .filter(part => part.type === 'text')
+                        .map(part => part.text)
+                        .join('\n');
+                }
+            } else {
+                console.warn('⚠️ No message item found in data.output array');
+                // Check if we just got a tool list (debugging)
+                const toolList = data.output.find(item => item.type === 'mcp_list_tools');
+                if (toolList) {
+                    console.log('🛠️ Response contained tool definitions but no message.');
+                }
+            }
+        } 
+        // Fallback for string output (some API versions)
+        else if (typeof data.output === 'string') {
+            responseText = data.output;
+        }
+
+        // Fallbacks for legacy/alternative formats
+        if (!responseText) {
+            responseText = data.output_text ||
+                          data.choices?.[0]?.message?.content ||
+                          data.choices?.[0]?.text;
+        }
+
+        // Final fallback
+        if (!responseText) {
+            console.warn('⚠️ Could not extract response text from:', data);
+            responseText = 'No text response generated. (Check console for details)';
+        }
 
         console.log('📝 Extracted response text:', responseText);
         return responseText;
