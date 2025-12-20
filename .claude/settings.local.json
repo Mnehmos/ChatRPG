@@ -10,7 +10,9 @@
       "Bash(dir /T:W /O:-D testscombatmanage_condition.test.ts testscharactersget_character.test.ts)",
       "Bash(dir:*)",
       "Bash(node:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(npx vitest:*)",
+      "Bash(npx tsc)"
     ],
     "deny": [],
     "ask": []

@@ -98,8 +98,10 @@ import {
   levelUp,
   levelUpSchema
 } from './modules/characters.js';
-import { measureDistance, measureDistanceSchema } from './modules/spatial.js';
+import { measureDistance, measureDistanceSchema, calculateAoe, calculateAoeSchema, checkLineOfSight, checkLineOfSightSchema, checkCover, checkCoverSchema, placeProp, placePropSchema, calculateMovement, calculateMovementSchema } from './modules/spatial.js';
 import { manageCondition, manageConditionSchema, createEncounter, createEncounterSchema, executeAction, executeActionSchema, advanceTurn, advanceTurnSchema, rollDeathSave, rollDeathSaveSchema, modifyTerrain, modifyTerrainSchema, renderBattlefield, renderBattlefieldSchema, getEncounter, getEncounterSchema, endEncounter, endEncounterSchema } from './modules/combat.js';
+import { manageConcentration, manageConcentrationSchema, manageAura, manageAuraSchema, useScroll, useScrollSchema, synthesizeSpell, synthesizeSpellSchema } from './modules/magic.js';
+import { manageLocation, manageLocationSchema, moveParty, movePartySchema, manageParty, managePartySchema } from './modules/data.js';
 import { createBox, BOX } from './modules/ascii-art.js';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
@@ -507,6 +509,106 @@ export const toolRegistry: Record<string, ToolDefinition> = {
     },
   },
 
+  calculate_aoe: {
+    name: 'calculate_aoe',
+    description: 'Calculate area of effect for D&D 5e spells/abilities (sphere, cone, line, cube, cylinder)',
+    inputSchema: toJsonSchema(calculateAoeSchema),
+    handler: async (args) => {
+      try {
+        const validated = calculateAoeSchema.parse(args);
+        const result = calculateAoe(validated);
+        return success(result);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          const messages = err.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+          return error(`Validation failed: ${messages}`);
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        return error(message);
+      }
+    },
+  },
+
+  check_line_of_sight: {
+    name: 'check_line_of_sight',
+    description: 'Check line of sight between positions with obstacle/cover detection',
+    inputSchema: toJsonSchema(checkLineOfSightSchema),
+    handler: async (args) => {
+      try {
+        const validated = checkLineOfSightSchema.parse(args);
+        const result = checkLineOfSight(validated);
+        return success(result);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          const messages = err.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+          return error(`Validation failed: ${messages}`);
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        return error(message);
+      }
+    },
+  },
+
+  check_cover: {
+    name: 'check_cover',
+    description: 'Check cover between attacker and target, returning AC and Dex save bonuses',
+    inputSchema: toJsonSchema(checkCoverSchema),
+    handler: async (args) => {
+      try {
+        const validated = checkCoverSchema.parse(args);
+        const result = checkCover(validated);
+        return success(result);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          const messages = err.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+          return error(`Validation failed: ${messages}`);
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        return error(message);
+      }
+    },
+  },
+
+  place_prop: {
+    name: 'place_prop',
+    description: 'Place or manage interactive props on the battlefield (barrels, doors, chests, etc.)',
+    inputSchema: toJsonSchema(placePropSchema),
+    handler: async (args) => {
+      try {
+        const validated = placePropSchema.parse(args);
+        const result = placeProp(validated);
+        return success(result);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          const messages = err.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+          return error(`Validation failed: ${messages}`);
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        return error(message);
+      }
+    },
+  },
+
+  calculate_movement: {
+    name: 'calculate_movement',
+    description: 'Calculate movement paths, reachable squares, or adjacent squares with terrain support',
+    inputSchema: toJsonSchema(calculateMovementSchema),
+    handler: async (args) => {
+      try {
+        const validated = calculateMovementSchema.parse(args);
+        const result = calculateMovement(validated);
+        return success(result);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          const messages = err.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+          return error(`Validation failed: ${messages}`);
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        return error(message);
+      }
+    },
+  },
+
   manage_condition: {
     name: 'manage_condition',
     description: 'Manage D&D 5e conditions on targets (add, remove, query, tick duration)',
@@ -701,6 +803,143 @@ export const toolRegistry: Record<string, ToolDefinition> = {
         const validated = endEncounterSchema.parse(args);
         const result = endEncounter(validated);
         return success(result);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          const messages = err.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+          return error(`Validation failed: ${messages}`);
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        return error(message);
+      }
+    },
+  },
+
+  manage_concentration: {
+    name: 'manage_concentration',
+    description: 'Manage D&D 5e concentration on spells. Operations: set (begin concentrating), get (query state), check (roll save after damage), break (end concentration). DC = max(10, damage/2). Supports advantage/disadvantage on saves.',
+    inputSchema: toJsonSchema(manageConcentrationSchema),
+    handler: async (args) => {
+      try {
+        const validated = manageConcentrationSchema.parse(args);
+        const result = manageConcentration(validated);
+        return success(result);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          const messages = err.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+          return error(`Validation failed: ${messages}`);
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        return error(message);
+      }
+    },
+  },
+
+  manage_aura: {
+    name: 'manage_aura',
+    description: 'Manage D&D 5e aura effects (Spirit Guardians, Aura of Protection, etc.). Operations: create (new aura), list (active auras), process (apply effects to targets in range), remove (end aura). Supports damage, healing, conditions, and saving throws.',
+    inputSchema: toJsonSchema(manageAuraSchema),
+    handler: async (args) => {
+      try {
+        const validated = manageAuraSchema.parse(args);
+        const result = manageAura(validated);
+        return success(result);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          const messages = err.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+          return error(`Validation failed: ${messages}`);
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        return error(message);
+      }
+    },
+  },
+
+  use_scroll: {
+    name: 'use_scroll',
+    description: 'Use a spell scroll in D&D 5e. If spell is on your class list and same/lower level: auto-success. If spell is higher level: Arcana check DC 10 + spell level. On failure: scroll is consumed with no effect. On success: spell is cast from scroll, scroll consumed.',
+    inputSchema: toJsonSchema(useScrollSchema),
+    handler: async (args) => {
+      try {
+        const validated = useScrollSchema.parse(args);
+        const result = useScroll(validated);
+        return success(result);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          const messages = err.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+          return error(`Validation failed: ${messages}`);
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        return error(message);
+      }
+    },
+  },
+
+  synthesize_spell: {
+    name: 'synthesize_spell',
+    description: 'Arcane Synthesis for improvised magic. Caster proposes a custom spell effect; Arcana check DC = 10 + (level × 2) + modifiers. Success creates temporary spell effect, failure may cause mishaps. Supports circumstance modifiers (ley lines, desperation, material components).',
+    inputSchema: toJsonSchema(synthesizeSpellSchema),
+    handler: async (args) => {
+      try {
+        const validated = synthesizeSpellSchema.parse(args);
+        const result = synthesizeSpell(validated);
+        return success(result);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          const messages = err.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+          return error(`Validation failed: ${messages}`);
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        return error(message);
+      }
+    },
+  },
+
+  manage_location: {
+    name: 'manage_location',
+    description: 'Manage location graph for party navigation. Operations: create (new location), get (retrieve location + connections), update (modify properties), delete (remove location), link (connect two locations), unlink (disconnect locations), list (all locations). Supports location types, lighting, hazards, tags, and connection types (door, passage, stairs, ladder, portal, hidden).',
+    inputSchema: toJsonSchema(manageLocationSchema),
+    handler: async (args) => {
+      try {
+        const result = await manageLocation(args);
+        return result;
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          const messages = err.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+          return error(`Validation failed: ${messages}`);
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        return error(message);
+      }
+    },
+  },
+
+  move_party: {
+    name: 'move_party',
+    description: 'Move the party between connected locations. Operations: move (travel to connected location), status (show current location and exits), history (show travel history). Validates connections, handles locked/hidden passages, one-way paths, and tracks travel history.',
+    inputSchema: toJsonSchema(movePartySchema),
+    handler: async (args) => {
+      try {
+        const result = await moveParty(args);
+        return result;
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          const messages = err.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+          return error(`Validation failed: ${messages}`);
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        return error(message);
+      }
+    },
+  },
+
+  manage_party: {
+    name: 'manage_party',
+    description: 'Manage party composition. Operations: add (add character to party with optional role), remove (remove character from party), list (show party roster), get (get party member details), set_role (assign role to party member), clear (remove all members). Roles: leader, scout, healer, tank, support, damage, utility, other.',
+    inputSchema: toJsonSchema(managePartySchema),
+    handler: async (args) => {
+      try {
+        const result = await manageParty(args);
+        return result;
       } catch (err) {
         if (err instanceof z.ZodError) {
           const messages = err.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
