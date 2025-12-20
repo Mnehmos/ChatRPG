@@ -1,0 +1,17 @@
+# Local development files
+.env.local
+index-dev.html
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*

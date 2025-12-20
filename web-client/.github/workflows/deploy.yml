@@ -1,0 +1,57 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'web-client/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Inject Configuration
+        env:
+          SERVER_URL: ${{ secrets.CHATRPG_SERVER_URL }}
+          API_KEY: ${{ secrets.CHATRPG_API_KEY }}
+        run: |
+          cd web-client
+          # Replace placeholders in index.html
+          sed -i "s|{{SERVER_URL}}|$SERVER_URL|g" index.html
+          sed -i "s|{{API_KEY}}|$API_KEY|g" index.html
+          echo "Configuration injected successfully"
+          echo "Server URL: ${SERVER_URL}"
+          echo "API Key: ***REDACTED***"
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './web-client'
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
