@@ -117,15 +117,29 @@ class ChatApp {
     }
 
     async callOpenAI(userMessage) {
-        // Build conversation context
+        // System prompt - placed first to maximize cache hits
+        const systemPrompt = `You are a helpful D&D 5e assistant powered by the ChatRPG MCP server.
+
+Your capabilities include:
+- Character creation and management
+- Combat encounter tracking
+- Inventory management
+- Spell management
+- Campaign organization
+- Dice rolling and D&D 5e rules assistance
+
+Always use the ChatRPG tools when users ask about D&D mechanics, character creation, combat, or campaign management.`;
+
+        // Build conversation context (recent history for continuity)
         const conversationContext = this.conversationHistory
             .slice(-5) // Keep last 5 exchanges for context
             .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
             .join('\n');
 
+        // Structure: Static system prompt first, then conversation history, then current message
         const fullInput = conversationContext
-            ? `${conversationContext}\nUser: ${userMessage}`
-            : userMessage;
+            ? `${systemPrompt}\n\n${conversationContext}\nUser: ${userMessage}`
+            : `${systemPrompt}\n\nUser: ${userMessage}`;
 
         const response = await fetch('https://api.openai.com/v1/responses', {
             method: 'POST',
@@ -136,6 +150,8 @@ class ChatApp {
             body: JSON.stringify({
                 model: 'gpt-5-nano-2025-08-07',
                 input: fullInput,
+                prompt_cache_retention: '24h', // Enable extended caching
+                prompt_cache_key: 'chatrpg-web-client-v1', // Consistent key for better cache routing
                 tools: [
                     {
                         type: 'mcp',
@@ -154,6 +170,23 @@ class ChatApp {
         }
 
         const data = await response.json();
+
+        // Log cache performance metrics
+        if (data.usage) {
+            const promptDetails = data.usage.prompt_tokens_details || {};
+            const cachedTokens = promptDetails.cached_tokens || 0;
+            const totalPromptTokens = data.usage.prompt_tokens || 0;
+            const cacheHitRate = totalPromptTokens > 0
+                ? ((cachedTokens / totalPromptTokens) * 100).toFixed(1)
+                : 0;
+
+            console.log('📊 Cache Performance:', {
+                cached_tokens: cachedTokens,
+                total_prompt_tokens: totalPromptTokens,
+                cache_hit_rate: `${cacheHitRate}%`,
+                completion_tokens: data.usage.completion_tokens
+            });
+        }
 
         // Extract assistant's response using the new response format
         return data.output_text || 'No response generated.';
