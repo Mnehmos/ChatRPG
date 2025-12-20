@@ -307,7 +307,8 @@ describe('modify_terrain', () => {
 
       expect(result.isError).toBe(true);
       const text = getTextContent(result);
-      expect(text).toMatch(/invalid.*terrain.*type|must be one of/i);
+      // Fuzzy enum provides helpful error messages with suggestions
+      expect(text).toMatch(/invalid value.*did you mean/i);
     });
 
     it('should return error for positions outside battlefield bounds', async () => {

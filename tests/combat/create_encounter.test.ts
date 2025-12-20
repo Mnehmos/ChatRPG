@@ -717,7 +717,7 @@ describe('create_encounter', () => {
       expect(result.isError).toBe(true);
     });
 
-    it('should return error for invalid lighting value', async () => {
+    it('should accept fuzzy lighting values (twilight -> dim)', async () => {
       const result = await handleToolCall('create_encounter', {
         participants: [
           { id: 'p1', name: 'Test', hp: 20, maxHp: 20, position: { x: 0, y: 0 } },
@@ -725,7 +725,10 @@ describe('create_encounter', () => {
         lighting: 'twilight' as any,
       });
 
-      expect(result.isError).toBe(true);
+      expect(result.isError).toBeUndefined();
+      const text = getTextContent(result);
+      // Fuzzy enum should transform 'twilight' to 'dim'
+      expect(text).toContain('dim');
     });
 
     it('should return error for terrain width < 5', async () => {

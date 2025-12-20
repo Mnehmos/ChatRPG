@@ -18,8 +18,10 @@ import {
   AbilitySchema,
   DamageTypeSchema,
   ConditionSchema,
-  SkillSchema
+  SkillSchema,
+  SizeSchema
 } from '../types.js';
+import { fuzzyEnum } from '../fuzzy-enum.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
@@ -67,13 +69,13 @@ export const customClassSchema = z.object({
   /** Hit die size: d4=4, d6=6, d8=8, d10=10, d12=12 */
   hitDie: z.number().min(4).max(12).default(8),
   /** Spellcasting progression type */
-  spellcasting: z.enum(['full', 'half', 'third', 'warlock', 'none']).default('none'),
+  spellcasting: fuzzyEnum(['full', 'half', 'third', 'warlock', 'none'] as const).default('none'),
   /** Ability used for spellcasting (if applicable) */
-  spellcastingAbility: z.enum(['str', 'dex', 'con', 'int', 'wis', 'cha']).optional(),
+  spellcastingAbility: AbilitySchema.optional(),
   /** Primary ability for the class */
-  primaryAbility: z.enum(['str', 'dex', 'con', 'int', 'wis', 'cha']).optional(),
+  primaryAbility: AbilitySchema.optional(),
   /** Default saving throw proficiencies */
-  saveProficiencies: z.array(z.enum(['str', 'dex', 'con', 'int', 'wis', 'cha'])).optional(),
+  saveProficiencies: z.array(AbilitySchema).optional(),
   /** Flavor text / description */
   description: z.string().optional(),
   /** Custom resource name (e.g., 'Ki Points', 'Rage', 'Superiority Dice') */
@@ -81,7 +83,7 @@ export const customClassSchema = z.object({
   /** Max resource at level 1 (scales by level if resourceScaling provided) */
   resourceMax: z.number().optional(),
   /** How resource scales: 'level' = equals level, 'half' = level/2, number = fixed */
-  resourceScaling: z.union([z.enum(['level', 'half', 'third', 'none']), z.number()]).optional(),
+  resourceScaling: z.union([fuzzyEnum(['level', 'half', 'third', 'none'] as const), z.number()]).optional(),
 });
 
 export type CustomClass = z.infer<typeof customClassSchema>;
@@ -133,7 +135,7 @@ export const customRaceSchema = z.object({
   /** Languages known */
   languages: z.array(z.string()).optional(),
   /** Size category */
-  size: z.enum(['tiny', 'small', 'medium', 'large', 'huge', 'gargantuan']).default('medium'),
+  size: SizeSchema.default('medium'),
   /** Flavor text / description */
   description: z.string().optional(),
   /** Darkvision range in feet (0 = none) */
@@ -152,7 +154,7 @@ export const createCharacterSchema = z.object({
   class: z.string().default('Fighter'),
   level: z.number().min(1, 'Level must be at least 1').max(20, 'Level cannot exceed 20').default(1),
   background: z.string().optional(),
-  characterType: z.enum(['pc', 'npc', 'enemy', 'neutral']).default('pc'),
+  characterType: fuzzyEnum(['pc', 'npc', 'enemy', 'neutral'] as const, 'characterType').default('pc'),
   stats: z.object({
     str: z.number().min(1, 'Ability score must be at least 1').max(30, 'Ability score cannot exceed 30').default(10),
     dex: z.number().min(1, 'Ability score must be at least 1').max(30, 'Ability score cannot exceed 30').default(10),
@@ -211,7 +213,7 @@ const singleUpdateSchema = z.object({
   class: z.string().optional(),
   level: z.number().min(1, 'Level must be at least 1').max(20, 'Level cannot exceed 20').optional(),
   background: z.string().optional(),
-  characterType: z.enum(['pc', 'npc', 'enemy', 'neutral']).optional(),
+  characterType: fuzzyEnum(['pc', 'npc', 'enemy', 'neutral'] as const, 'characterType').optional(),
   stats: z.object({
     str: z.number().min(1).max(30).optional(),
     dex: z.number().min(1).max(30).optional(),
@@ -288,7 +290,7 @@ export type DeleteCharacterInput = z.infer<typeof deleteCharacterSchema>;
 const singleRestSchema = z.object({
   characterId: z.string().min(1).optional(),
   characterName: z.string().min(1).optional(),
-  restType: z.enum(['short', 'long']),
+  restType: fuzzyEnum(['short', 'long'] as const, 'restType'),
   hitDiceToSpend: z.number().min(0).optional(),
   restoreHp: z.boolean().default(true),
   restoreSpellSlots: z.boolean().default(true),
@@ -332,7 +334,7 @@ export type TakeRestInput = z.infer<typeof singleRestSchema>;
 const singleSpellSlotSchema = z.object({
   characterId: z.string().min(1).optional(),
   characterName: z.string().min(1).optional(),
-  operation: z.enum(['view', 'expend', 'restore', 'set']),
+  operation: fuzzyEnum(['view', 'expend', 'restore', 'set'] as const),
   slotLevel: z.number().min(1).max(9).optional(),
   count: z.number().min(1).optional(),
   pactMagic: z.boolean().optional(),
@@ -401,7 +403,7 @@ const singleLevelUpSchema = z.object({
   characterId: z.string().min(1).optional(),
   characterName: z.string().min(1).optional(),
   targetLevel: z.number().min(2).max(20).optional(),
-  hpMethod: z.enum(['roll', 'average', 'max', 'manual']).default('average'),
+  hpMethod: fuzzyEnum(['roll', 'average', 'max', 'manual'] as const).default('average'),
   manualHp: z.number().min(1).optional(),
   manualRoll: z.number().min(1).max(20).optional(),
   newFeatures: z.array(z.string()).optional(),
@@ -432,7 +434,7 @@ export const rollCheckSchema = z.object({
   characterId: z.string().optional(),
   characterName: z.string().optional(),
 
-  checkType: z.enum(['skill', 'ability', 'save', 'attack', 'initiative']),
+  checkType: fuzzyEnum(['skill', 'ability', 'save', 'attack', 'initiative'] as const),
 
   skill: SkillSchema.optional(),
   ability: AbilitySchema.optional(),
@@ -444,7 +446,7 @@ export const rollCheckSchema = z.object({
 
   contestedBy: z.string().optional(),
   contestedCheck: z.object({
-    type: z.enum(['skill', 'ability']),
+    type: fuzzyEnum(['skill', 'ability'] as const),
     skillOrAbility: z.string(),
   }).optional(),
 });

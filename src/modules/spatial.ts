@@ -4,7 +4,8 @@
  */
 
 import { z } from 'zod';
-import { PositionSchema } from '../types.js';
+import { PositionSchema, SizeSchema, LightSchema, AoeShapeSchema } from '../types.js';
+import { fuzzyEnum } from '../fuzzy-enum.js';
 import { createBox, centerText, drawPath, BOX } from './ascii-art.js';
 import { getEncounterParticipant, getEncounterState } from './combat.js';
 
@@ -16,7 +17,7 @@ export const measureDistanceSchema = z.object({
   encounterId: z.string().optional(),
   from: z.union([z.string(), PositionSchema]),
   to: z.union([z.string(), PositionSchema]),
-  mode: z.enum(['euclidean', 'grid_5e', 'grid_alt']).default('euclidean'),
+  mode: fuzzyEnum(['euclidean', 'grid_5e', 'grid_alt'] as const).default('euclidean'),
   includeElevation: z.boolean().default(true),
 });
 
@@ -211,7 +212,7 @@ function formatDistanceResult(params: {
 /**
  * AoE shape types per D&D 5e
  */
-const AoeShapeSchema = z.enum(['sphere', 'cone', 'line', 'cube', 'cylinder']);
+// Using AoeShapeSchema from types.ts
 
 /**
  * Direction for cones/lines
@@ -612,7 +613,7 @@ function calculateCylinderTiles(
 /**
  * Obstacle types for line of sight calculations
  */
-const ObstacleTypeSchema = z.enum([
+const ObstacleTypeSchema = fuzzyEnum([
   'wall',
   'pillar',
   'half_cover',
@@ -634,7 +635,8 @@ const ObstacleSchema = z.object({
 /**
  * Creature size for blocking calculations
  */
-const CreatureSizeSchema = z.enum(['tiny', 'small', 'medium', 'large', 'huge', 'gargantuan']);
+// Using SizeSchema from types.ts
+const CreatureSizeSchema = SizeSchema;
 
 /**
  * Creature blocking info
@@ -649,7 +651,7 @@ const CreatureBlockSchema = z.object({
 /**
  * Special senses
  */
-const SenseSchema = z.enum(['blindsight', 'darkvision', 'tremorsense', 'truesight']);
+const SenseSchema = fuzzyEnum(['blindsight', 'darkvision', 'tremorsense', 'truesight'] as const);
 
 /**
  * Schema for check_line_of_sight
@@ -671,7 +673,7 @@ export const checkLineOfSightSchema = z.object({
   creaturesBlock: z.boolean().default(false),
 
   // Lighting and senses
-  lighting: z.enum(['bright', 'dim', 'darkness']).optional(),
+  lighting: LightSchema.optional(),
   darkvision: z.number().optional(),
   senses: z.array(SenseSchema).optional(),
   blindsightRange: z.number().optional(),
@@ -1224,7 +1226,7 @@ export function checkCover(input: CheckCoverInput): string {
 /**
  * Prop types supported by the system
  */
-const PropTypeSchema = z.enum([
+const PropTypeSchema = fuzzyEnum([
   'barrel',
   'crate',
   'chest',
@@ -1243,12 +1245,13 @@ const PropTypeSchema = z.enum([
 /**
  * Cover types a prop can provide
  */
-const PropCoverTypeSchema = z.enum(['none', 'half', 'three_quarters', 'total']);
+const PropCoverTypeSchema = fuzzyEnum(['none', 'half', 'three_quarters', 'total'] as const, 'cover');
 
 /**
  * Prop size options
  */
-const PropSizeSchema = z.enum(['tiny', 'small', 'medium', 'large', 'huge', 'gargantuan']);
+// Using SizeSchema from types.ts
+const PropSizeSchema = SizeSchema;
 
 /**
  * Position schema for props
@@ -1262,7 +1265,7 @@ const PropPositionSchema = z.object({
 /**
  * Operation types for prop management
  */
-const PropOperationSchema = z.enum(['place', 'remove', 'update', 'move', 'list']);
+const PropOperationSchema = fuzzyEnum(['place', 'remove', 'update', 'move', 'list'] as const);
 
 /**
  * Schema for place_prop tool
@@ -1589,7 +1592,7 @@ export function placeProp(input: PlacePropInput): string {
 /**
  * Movement calculation modes
  */
-const MovementModeSchema = z.enum(['path', 'reach', 'adjacent']);
+const MovementModeSchema = fuzzyEnum(['path', 'reach', 'adjacent'] as const);
 
 /**
  * Position schema for movement (optional z)

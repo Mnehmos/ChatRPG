@@ -9,6 +9,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { randomUUID } from 'crypto';
 import { ConditionSchema, AbilitySchema, PositionSchema, SizeSchema, DamageTypeSchema, LightSchema, type Condition, type Ability } from '../types.js';
+import { fuzzyEnum } from '../fuzzy-enum.js';
 import { createBox, centerText, padText, BOX, createStatusBar } from './ascii-art.js';
 import { broadcastToEncounter } from '../websocket.js';
 import { getSpellSlotDataForCharacter } from './characters.js';
@@ -34,7 +35,7 @@ const singleConditionSchema = z.object({
   targetId: z.string(),
   encounterId: z.string().optional(),
 
-  operation: z.enum(['add', 'remove', 'query', 'tick']),
+  operation: fuzzyEnum(['add', 'remove', 'query', 'tick'] as const),
 
   // For add/remove
   condition: ConditionSchema.optional(),
@@ -1566,7 +1567,7 @@ function formatDeathSaveDisplay(encounterId: string, characterId: string): strin
  */
 export const getEncounterSchema = z.object({
   encounterId: z.string().describe('The ID of the encounter to retrieve'),
-  verbosity: z.enum(['minimal', 'summary', 'standard', 'detailed'])
+  verbosity: fuzzyEnum(['minimal', 'summary', 'standard', 'detailed'] as const, 'verbosity')
     .optional()
     .default('standard')
     .describe('Level of detail to return'),
@@ -2011,7 +2012,7 @@ export const executeActionSchema = z.object({
   manualDamageRoll: z.number().optional(),
   
   // Shove direction (Phase 2)
-  shoveDirection: z.enum(['away', 'prone']).optional(),
+  shoveDirection: fuzzyEnum(['away', 'prone'] as const).optional(),
   
   // Spell casting options (integrates with manage_spell_slots)
   /** Spell slot level: 0 = cantrip (no slot), 1-9 = leveled spell */
@@ -2948,7 +2949,7 @@ export const rollDeathSaveSchema = z.object({
   encounterId: z.string().describe('The encounter containing the dying character'),
   characterId: z.string().describe('The character making the death save'),
   modifier: z.number().optional().describe('Bonus/penalty to the roll (e.g., Bless spell gives +1d4)'),
-  rollMode: z.enum(['normal', 'advantage', 'disadvantage']).optional().default('normal')
+  rollMode: fuzzyEnum(['normal', 'advantage', 'disadvantage'] as const, 'rollMode').optional().default('normal')
     .describe('Roll mode - advantage rolls 2d20 keep highest, disadvantage keeps lowest'),
   manualRoll: z.number().min(1).max(20).optional().describe('Override the d20 roll (for testing)'),
   manualRolls: z.array(z.number().min(1).max(20)).length(2).optional()
@@ -3671,7 +3672,7 @@ export const renderBattlefieldSchema = z.object({
   /** Entity ID to center the viewport on */
   focusOn: z.string().optional(),
   /** Level of detail for the legend: minimal, standard, or detailed */
-  legendDetail: z.enum(['minimal', 'standard', 'detailed']).default('standard'),
+  legendDetail: fuzzyEnum(['minimal', 'standard', 'detailed'] as const, 'verbosity').default('standard'),
 });
 
 export type RenderBattlefieldInput = z.input<typeof renderBattlefieldSchema>;
@@ -4302,10 +4303,8 @@ const HazardDetailsSchema = z.object({
  */
 export const modifyTerrainSchema = z.object({
   encounterId: z.string().describe('The encounter to modify'),
-  operation: z.enum(['add', 'remove', 'clear']).describe('Operation type'),
-  terrainType: z.enum(['obstacle', 'difficultTerrain', 'water', 'hazard'], {
-    errorMap: () => ({ message: 'Invalid terrain type - must be one of: obstacle, difficultTerrain, water, hazard' })
-  }).describe('Type of terrain'),
+  operation: fuzzyEnum(['add', 'remove', 'clear'] as const).describe('Operation type'),
+  terrainType: fuzzyEnum(['obstacle', 'difficultTerrain', 'water', 'hazard'] as const).describe('Type of terrain'),
   positions: z.array(z.string()).optional().describe('Array of "x,y" coordinate strings'),
   hazardDetails: HazardDetailsSchema.optional().describe('Details for hazard terrain'),
   source: z.string().optional().describe('Source of terrain change (spell, ability, etc.)'),
@@ -4611,7 +4610,7 @@ function formatTerrainModification(input: ModifyTerrainInput, affectedPositions:
 // End Encounter Schema
 export const endEncounterSchema = z.object({
   encounterId: z.string().describe('The encounter to end'),
-  outcome: z.enum(['victory', 'defeat', 'fled', 'negotiated', 'other']).describe('How combat ended'),
+  outcome: fuzzyEnum(['victory', 'defeat', 'fled', 'negotiated', 'other'] as const).describe('How combat ended'),
   generateSummary: z.boolean().optional().default(true).describe('Include combat statistics'),
   preserveLog: z.boolean().optional().default(false).describe('Keep encounter accessible after end'),
   notes: z.string().optional().describe('DM notes about the encounter'),
@@ -5081,14 +5080,14 @@ export const manageEncounterSchema = z.discriminatedUnion('operation', [
   z.object({
     operation: z.literal('get'),
     encounterId: z.string(),
-    verbosity: z.enum(['minimal', 'summary', 'standard', 'detailed']).optional().default('standard'),
+    verbosity: fuzzyEnum(['minimal', 'summary', 'standard', 'detailed'] as const, 'verbosity').optional().default('standard'),
   }),
   
   // END operation - extends endEncounterSchema with participantUpdates
   z.object({
     operation: z.literal('end'),
     encounterId: z.string(),
-    outcome: z.enum(['victory', 'defeat', 'fled', 'negotiated', 'other']),
+    outcome: fuzzyEnum(['victory', 'defeat', 'fled', 'negotiated', 'other'] as const),
     generateSummary: z.boolean().optional().default(true),
     preserveLog: z.boolean().optional().default(false),
     notes: z.string().optional(),
