@@ -5135,14 +5135,17 @@ export function manageEncounter(input: ManageEncounterInput): string {
  * Handle CREATE operation
  */
 function handleManageEncounterCreate(input: Extract<ManageEncounterInput, { operation: 'create' }>): string {
-  // Validate characterIds exist if provided
+  // Validate characterIds exist if provided - treat non-existent as ephemeral
   for (const p of input.participants) {
     if (p.characterId) {
       const charPath = path.join(DATA_ROOT, 'characters', `${p.characterId}.json`);
       if (!fs.existsSync(charPath)) {
-        throw new Error(`Character not found: ${p.characterId}`);
+        // Character doesn't exist - treat as ephemeral by deleting characterId property
+        // Must use delete so 'characterId' in p returns false
+        delete (p as any).characterId;
+        continue;
       }
-      
+
       // Load HP from persistent character
       try {
         const charData = JSON.parse(fs.readFileSync(charPath, 'utf-8'));

@@ -99,16 +99,20 @@ describe('manage_encounter', () => {
       expect(text).toContain('LinkedHero');
     });
 
-    it('should validate characterId exists when provided', async () => {
+    it('should treat non-existent characterId as ephemeral participant', async () => {
+      // When a characterId is provided but doesn't exist, treat participant as ephemeral
+      // This allows LLMs to create encounters with arbitrary enemy IDs without pre-creating characters
       const result = await handleToolCall('manage_encounter', {
         operation: 'create',
         participants: [
           { id: 'invalid-link', characterId: 'non-existent-id', name: 'Ghost', hp: 20, maxHp: 20, ac: 12, initiativeBonus: 1, position: { x: 5, y: 5 } },
         ],
       });
-      expect(result.isError).toBe(true);
-      const errorText = getTextContent(result);
-      expect(errorText).toMatch(/character.*not.*found/i);
+      expect(result.isError).toBeFalsy();
+      const text = getTextContent(result);
+      // Should create successfully, with participant treated as ephemeral
+      expect(text).toMatch(/encounter.*created|combat.*started/i);
+      expect(text).toMatch(/Ghost/i);
     });
 
     it('should load HP from persistent character when characterId provided', async () => {
