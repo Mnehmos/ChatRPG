@@ -9,12 +9,12 @@
 3. Click **New repository secret** and add:
 
    **Secret 1:**
-   - Name: `CHATRPG_SERVER_URL`
+   - Name: `MCP_SERVER_URL`
    - Value: `https://chatrpg-production.up.railway.app/sse`
 
-   **Secret 2 (Optional):**
-   - Name: `CHATRPG_API_KEY`
-   - Value: Your demo API key (or leave empty if not needed)
+   **Secret 2:**
+   - Name: `OPENAI_API_KEY`
+   - Value: Your OpenAI API key (from https://platform.openai.com/api-keys)
 
 ### Step 2: Enable GitHub Pages
 
@@ -90,8 +90,8 @@ If you prefer manual setup:
 
 2. **Edit `.env.local`:**
    ```env
-   CHATRPG_SERVER_URL=https://chatrpg-production.up.railway.app/sse
-   CHATRPG_API_KEY=your-key-here
+   MCP_SERVER_URL=https://chatrpg-production.up.railway.app/sse
+   OPENAI_API_KEY=sk-proj-your-openai-api-key-here
    ```
 
 3. **Create dev HTML:**
@@ -101,11 +101,11 @@ If you prefer manual setup:
 
 4. **Inject config (PowerShell):**
    ```powershell
-   $env:CHATRPG_SERVER_URL = "https://chatrpg-production.up.railway.app/sse"
-   $env:CHATRPG_API_KEY = "your-key"
+   $env:MCP_SERVER_URL = "https://chatrpg-production.up.railway.app/sse"
+   $env:OPENAI_API_KEY = "sk-proj-your-openai-api-key"
 
-   (Get-Content index-dev.html) -replace '{{SERVER_URL}}', $env:CHATRPG_SERVER_URL | Set-Content index-dev.html
-   (Get-Content index-dev.html) -replace '{{API_KEY}}', $env:CHATRPG_API_KEY | Set-Content index-dev.html
+   (Get-Content index-dev.html) -replace '{{MCP_SERVER_URL}}', $env:MCP_SERVER_URL | Set-Content index-dev.html
+   (Get-Content index-dev.html) -replace '{{OPENAI_API_KEY}}', $env:OPENAI_API_KEY | Set-Content index-dev.html
    ```
 
 5. **Start server:**
@@ -127,7 +127,7 @@ If you prefer manual setup:
 
 **Verify secrets are set:**
 - Go to Settings → Secrets and variables → Actions
-- Both `CHATRPG_SERVER_URL` and `CHATRPG_API_KEY` should be listed
+- Both `MCP_SERVER_URL` and `OPENAI_API_KEY` should be listed
 
 **Check workflow logs:**
 - Go to Actions tab
@@ -150,49 +150,52 @@ app.use(cors({
 }));
 ```
 
-**SSE connection fails:**
+**OpenAI API connection fails:**
 
-1. Verify the server URL in browser console:
+1. Verify the configuration in browser console:
    ```javascript
-   window.CHATRPG_CONFIG.serverUrl
+   window.CHATRPG_CONFIG.mcpServerUrl
+   window.CHATRPG_CONFIG.openaiApiKey // Will be redacted in console
    ```
 
-2. Test the SSE endpoint directly:
+2. Test the MCP server endpoint directly:
    ```bash
    curl https://chatrpg-production.up.railway.app/sse
    ```
 
-3. Check Railway logs for errors
+3. Check browser console for OpenAI API errors
 
 ### API Key Issues
 
-**Key not working:**
+**OpenAI API key not working:**
 
 1. Verify it's set in GitHub Secrets (check for typos)
-2. View page source after deployment - should NOT see `{{API_KEY}}`
-3. Check browser console for authentication errors
+2. View page source after deployment - should NOT see `{{OPENAI_API_KEY}}`
+3. Check browser console for OpenAI authentication errors
+4. Verify the key starts with `sk-proj-` or `sk-`
+5. Check the key has sufficient credits at https://platform.openai.com/usage
 
-**No API key needed:**
+**Important:**
 
-If your server doesn't require authentication, you can skip setting `CHATRPG_API_KEY`. The workflow will inject an empty string.
+This web client requires a valid OpenAI API key to function. The key is used to call OpenAI's Chat Completions API, which then connects to the ChatRPG MCP server as a remote tool.
 
 ## Testing
 
-### Test the SSE Connection
+### Test the OpenAI API Integration
 
 Open browser DevTools console:
 
 ```javascript
-// Check connection status
-chatApp.client.isConnected()
-// Should return: true
-
-// View configuration
+// View configuration (API key will be visible in source, but should be valid)
 window.CHATRPG_CONFIG
-// Should show your server URL (API key redacted in logs)
+// Should show: { mcpServerUrl: "...", openaiApiKey: "sk-..." }
 
-// Send test message
-chatApp.client.callTool('get_session_context', {})
+// The app automatically calls OpenAI API when you send messages
+// OpenAI then uses ChatRPG as a remote MCP tool
+// Check the Network tab to see API calls to api.openai.com
+
+// Try sending a message like:
+// "Create a level 1 fighter named Test"
 ```
 
 ### Test Without Secrets Locally
@@ -201,12 +204,12 @@ For quick testing, edit `index.html` directly:
 
 ```javascript
 window.CHATRPG_CONFIG = {
-    serverUrl: 'https://chatrpg-production.up.railway.app/sse',
-    apiKey: '' // Empty if not needed
+    mcpServerUrl: 'https://chatrpg-production.up.railway.app/sse',
+    openaiApiKey: 'sk-proj-your-actual-openai-key'
 };
 ```
 
-Then open `index.html` directly in your browser.
+Then open `index.html` directly in your browser. **Note:** The OpenAI API key is required for the client to function.
 
 ## Updating
 

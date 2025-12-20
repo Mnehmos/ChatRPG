@@ -13,8 +13,8 @@ if [ ! -f ".env.local" ]; then
     echo "✅ Created .env.local"
     echo ""
     echo "⚠️  Please edit .env.local with your settings:"
-    echo "   - CHATRPG_SERVER_URL"
-    echo "   - CHATRPG_API_KEY (optional)"
+    echo "   - MCP_SERVER_URL"
+    echo "   - OPENAI_API_KEY"
     echo ""
     exit 1
 fi
@@ -23,14 +23,14 @@ fi
 source .env.local
 
 # Validate configuration
-if [ -z "$CHATRPG_SERVER_URL" ]; then
-    echo "❌ CHATRPG_SERVER_URL not set in .env.local"
+if [ -z "$MCP_SERVER_URL" ]; then
+    echo "❌ MCP_SERVER_URL not set in .env.local"
     exit 1
 fi
 
 echo "📋 Configuration:"
-echo "   Server URL: $CHATRPG_SERVER_URL"
-echo "   API Key: ${CHATRPG_API_KEY:+***SET***}"
+echo "   MCP Server URL: $MCP_SERVER_URL"
+echo "   OpenAI API Key: ${OPENAI_API_KEY:+***SET***}"
 echo ""
 
 # Create development version of index.html
@@ -40,13 +40,13 @@ cp index.html index-dev.html
 # Inject configuration
 if [[ "$OSTYPE" == "darwin"* ]] || [[ "$OSTYPE" == "linux-gnu"* ]]; then
     # macOS and Linux
-    sed -i.bak "s|{{SERVER_URL}}|$CHATRPG_SERVER_URL|g" index-dev.html
-    sed -i.bak "s|{{API_KEY}}|${CHATRPG_API_KEY:-}|g" index-dev.html
+    sed -i.bak "s|{{MCP_SERVER_URL}}|$MCP_SERVER_URL|g" index-dev.html
+    sed -i.bak "s|{{OPENAI_API_KEY}}|${OPENAI_API_KEY:-}|g" index-dev.html
     rm index-dev.html.bak
 else
     # Windows Git Bash
-    sed -i "s|{{SERVER_URL}}|$CHATRPG_SERVER_URL|g" index-dev.html
-    sed -i "s|{{API_KEY}}|${CHATRPG_API_KEY:-}|g" index-dev.html
+    sed -i "s|{{MCP_SERVER_URL}}|$MCP_SERVER_URL|g" index-dev.html
+    sed -i "s|{{OPENAI_API_KEY}}|${OPENAI_API_KEY:-}|g" index-dev.html
 fi
 
 echo "✅ Created index-dev.html with your configuration"

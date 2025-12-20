@@ -1,10 +1,11 @@
 /**
- * ChatRPG Web Client - Main Application
+ * ChatRPG Web Client - OpenAI API Integration
+ * Uses OpenAI's API with ChatRPG as a remote MCP server
  */
 
 class ChatApp {
     constructor() {
-        this.client = null;
+        this.conversationHistory = [];
         this.isProcessing = false;
 
         // DOM elements
@@ -19,22 +20,24 @@ class ChatApp {
 
     init() {
         // Check config
-        if (!window.CHATRPG_CONFIG || !window.CHATRPG_CONFIG.serverUrl) {
-            this.showError('Configuration error: Server URL not set');
+        if (!window.CHATRPG_CONFIG || !window.CHATRPG_CONFIG.openaiApiKey) {
+            this.showError('Configuration error: OpenAI API key not set');
+            this.updateStatus('error', 'Not configured');
             return;
         }
 
-        // Initialize MCP client
-        this.client = new MCPClient(
-            window.CHATRPG_CONFIG.serverUrl,
-            window.CHATRPG_CONFIG.apiKey
-        );
+        if (!window.CHATRPG_CONFIG.mcpServerUrl) {
+            this.showError('Configuration error: MCP server URL not set');
+            this.updateStatus('error', 'Not configured');
+            return;
+        }
 
         // Set up event listeners
         this.setupEventListeners();
 
-        // Connect to server
-        this.connect();
+        // Update status
+        this.updateStatus('connected', 'Ready');
+        this.sendButton.disabled = false;
     }
 
     setupEventListeners() {
@@ -54,71 +57,11 @@ class ChatApp {
             this.userInput.style.height = 'auto';
             this.userInput.style.height = Math.min(this.userInput.scrollHeight, 150) + 'px';
         });
-
-        // MCP client events
-        this.client.on('connection', (data) => this.handleConnectionStatus(data));
-        this.client.on('message', (data) => this.handleMessage(data));
-        this.client.on('tool_response', (data) => this.handleToolResponse(data));
-        this.client.on('error', (data) => this.handleError(data));
-    }
-
-    async connect() {
-        try {
-            this.updateStatus('connecting', 'Connecting...');
-            await this.client.connect();
-        } catch (error) {
-            console.error('Connection failed:', error);
-            this.updateStatus('error', 'Connection failed');
-            this.showError('Failed to connect to ChatRPG server. Please check your internet connection.');
-        }
-    }
-
-    handleConnectionStatus(data) {
-        switch (data.status) {
-            case 'connected':
-                this.updateStatus('connected', 'Connected');
-                this.sendButton.disabled = false;
-                break;
-            case 'reconnecting':
-                this.updateStatus('connecting', `Reconnecting... (${data.attempt})`);
-                this.sendButton.disabled = true;
-                break;
-            case 'error':
-            case 'failed':
-                this.updateStatus('error', 'Disconnected');
-                this.sendButton.disabled = true;
-                break;
-            case 'disconnected':
-                this.updateStatus('error', 'Disconnected');
-                this.sendButton.disabled = true;
-                break;
-        }
     }
 
     updateStatus(status, text) {
         this.statusIndicator.className = `status-indicator ${status}`;
         this.statusText.textContent = text;
-    }
-
-    handleMessage(data) {
-        console.log('Received message:', data);
-        // Handle general messages from the server
-    }
-
-    handleToolResponse(data) {
-        console.log('Received tool response:', data);
-        if (data.content) {
-            this.addMessage('assistant', this.formatToolResponse(data.content));
-        }
-        this.isProcessing = false;
-        this.updateInputState();
-    }
-
-    handleError(data) {
-        console.error('Received error:', data);
-        this.showError(data.message || 'An error occurred');
-        this.isProcessing = false;
-        this.updateInputState();
     }
 
     async sendMessage() {
@@ -127,6 +70,10 @@ class ChatApp {
 
         // Add user message to chat
         this.addMessage('user', message);
+        this.conversationHistory.push({
+            role: 'user',
+            content: message
+        });
 
         // Clear input
         this.userInput.value = '';
@@ -135,39 +82,94 @@ class ChatApp {
         // Update state
         this.isProcessing = true;
         this.updateInputState();
+        this.updateStatus('connecting', 'Thinking...');
 
         // Show loading indicator
         const loadingId = this.addLoadingMessage();
 
         try {
-            // Call the MCP server
-            const response = await this.client.callTool('chat_message', {
-                message: message,
-                context: 'web-client'
-            });
+            // Call OpenAI API with ChatRPG as remote MCP server
+            const response = await this.callOpenAI(message);
 
             // Remove loading indicator
             this.removeMessage(loadingId);
 
-            // Handle response
-            if (response.content) {
-                this.addMessage('assistant', this.formatToolResponse(response.content));
-            } else if (response.error) {
-                this.showError(response.error);
+            // Add assistant response
+            if (response) {
+                this.addMessage('assistant', response);
+                this.conversationHistory.push({
+                    role: 'assistant',
+                    content: response
+                });
             }
 
+            this.updateStatus('connected', 'Ready');
+
         } catch (error) {
-            console.error('Error sending message:', error);
+            console.error('Error calling OpenAI:', error);
             this.removeMessage(loadingId);
-            this.showError('Failed to send message. Please try again.');
+            this.showError(`Failed to get response: ${error.message}`);
+            this.updateStatus('error', 'Error');
         } finally {
             this.isProcessing = false;
             this.updateInputState();
         }
     }
 
+    async callOpenAI(userMessage) {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${window.CHATRPG_CONFIG.openaiApiKey}`
+            },
+            body: JSON.stringify({
+                model: 'gpt-4o',
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'You are a helpful D&D 5e assistant powered by the ChatRPG MCP server. Use the available tools to help users manage characters, run combat encounters, track inventory, and more. When users ask about D&D mechanics, character creation, or campaign management, use the appropriate ChatRPG tools.'
+                    },
+                    ...this.conversationHistory.slice(-10), // Keep last 10 messages for context
+                    {
+                        role: 'user',
+                        content: userMessage
+                    }
+                ],
+                tools: [
+                    {
+                        type: 'mcp',
+                        server_label: 'chatrpg',
+                        server_description: 'A comprehensive D&D 5e MCP server for character management, combat encounters, inventory tracking, spell management, and campaign organization.',
+                        server_url: window.CHATRPG_CONFIG.mcpServerUrl,
+                        require_approval: 'never'
+                    }
+                ],
+                temperature: 0.7,
+                max_tokens: 2000
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error?.message || 'OpenAI API request failed');
+        }
+
+        const data = await response.json();
+
+        // Extract assistant's response
+        const assistantMessage = data.choices[0]?.message;
+
+        if (assistantMessage?.tool_calls) {
+            // If there were tool calls, the final content should include results
+            console.log('Tool calls made:', assistantMessage.tool_calls);
+        }
+
+        return assistantMessage?.content || 'No response generated.';
+    }
+
     updateInputState() {
-        this.sendButton.disabled = this.isProcessing || !this.client.isConnected();
+        this.sendButton.disabled = this.isProcessing;
         this.userInput.disabled = this.isProcessing;
     }
 
@@ -229,24 +231,9 @@ class ChatApp {
         return text
             .replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
             .replace(/`([^`]+)`/g, '<code>$1</code>')
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')
             .replace(/\n/g, '<br>');
-    }
-
-    formatToolResponse(content) {
-        if (Array.isArray(content)) {
-            // Handle array of content blocks
-            return content.map(block => {
-                if (block.type === 'text') {
-                    return block.text;
-                }
-                return JSON.stringify(block);
-            }).join('\n\n');
-        } else if (typeof content === 'object' && content.text) {
-            return content.text;
-        } else if (typeof content === 'string') {
-            return content;
-        }
-        return JSON.stringify(content, null, 2);
     }
 
     scrollToBottom() {

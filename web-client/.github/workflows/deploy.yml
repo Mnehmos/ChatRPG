@@ -29,16 +29,16 @@ jobs:
 
       - name: Inject Configuration
         env:
-          SERVER_URL: ${{ secrets.CHATRPG_SERVER_URL }}
-          API_KEY: ${{ secrets.CHATRPG_API_KEY }}
+          MCP_SERVER_URL: ${{ secrets.MCP_SERVER_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           cd web-client
           # Replace placeholders in index.html
-          sed -i "s|{{SERVER_URL}}|$SERVER_URL|g" index.html
-          sed -i "s|{{API_KEY}}|$API_KEY|g" index.html
+          sed -i "s|{{MCP_SERVER_URL}}|$MCP_SERVER_URL|g" index.html
+          sed -i "s|{{OPENAI_API_KEY}}|$OPENAI_API_KEY|g" index.html
           echo "Configuration injected successfully"
-          echo "Server URL: ${SERVER_URL}"
-          echo "API Key: ***REDACTED***"
+          echo "MCP Server URL: ${MCP_SERVER_URL}"
+          echo "OpenAI API Key: ***REDACTED***"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

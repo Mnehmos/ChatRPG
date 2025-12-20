@@ -1,11 +1,12 @@
 # ChatRPG Web Client
 
-A lightweight web interface for the ChatRPG D&D 5e MCP server.
+A lightweight web interface for the ChatRPG D&D 5e MCP server, powered by OpenAI's GPT-4o.
 
 ## Features
 
 - 🎲 **Real-time Chat Interface** - Interactive D&D 5e assistant
-- 🔌 **SSE Connection** - Server-Sent Events for live updates
+- 🤖 **OpenAI Integration** - Uses GPT-4o for natural language understanding
+- 🔌 **Remote MCP Server** - Connects to ChatRPG as an OpenAI remote tool
 - 🎨 **Modern UI** - Clean, responsive design
 - 🔒 **Secure Deployment** - API keys injected via GitHub Actions
 - 📱 **Mobile Friendly** - Works on all devices
@@ -21,28 +22,41 @@ A lightweight web interface for the ChatRPG D&D 5e MCP server.
 
 2. **Edit `.env.local` with your settings:**
    ```env
-   CHATRPG_SERVER_URL=https://chatrpg-production.up.railway.app/sse
-   CHATRPG_API_KEY=your-api-key
+   MCP_SERVER_URL=https://chatrpg-production.up.railway.app/sse
+   OPENAI_API_KEY=sk-proj-your-openai-api-key-here
    ```
 
-3. **Create a local config file:**
+3. **Run the setup script:**
+   ```bash
+   # On Windows (PowerShell):
+   .\dev-setup.ps1
+
+   # On Mac/Linux:
+   ./dev-setup.sh
+   ```
+
+   The script will automatically create `index-dev.html` with your configuration and start a local server.
+
+Alternatively, you can set up manually:
+
+4. **Manual Setup - Create a local config file:**
    ```bash
    # Copy index.html to index-dev.html
    cp index.html index-dev.html
    ```
 
-4. **Inject local configuration:**
+5. **Manual Setup - Inject local configuration:**
    ```bash
    # On Unix/Mac:
-   sed -i "s|{{SERVER_URL}}|https://chatrpg-production.up.railway.app/sse|g" index-dev.html
-   sed -i "s|{{API_KEY}}|your-api-key|g" index-dev.html
+   sed -i "s|{{MCP_SERVER_URL}}|https://chatrpg-production.up.railway.app/sse|g" index-dev.html
+   sed -i "s|{{OPENAI_API_KEY}}|your-openai-api-key|g" index-dev.html
 
    # On Windows (PowerShell):
-   (Get-Content index-dev.html) -replace '{{SERVER_URL}}', 'https://chatrpg-production.up.railway.app/sse' | Set-Content index-dev.html
-   (Get-Content index-dev.html) -replace '{{API_KEY}}', 'your-api-key' | Set-Content index-dev.html
+   (Get-Content index-dev.html) -replace '{{MCP_SERVER_URL}}', 'https://chatrpg-production.up.railway.app/sse' | Set-Content index-dev.html
+   (Get-Content index-dev.html) -replace '{{OPENAI_API_KEY}}', 'your-openai-api-key' | Set-Content index-dev.html
    ```
 
-5. **Serve the files:**
+6. **Manual Setup - Serve the files:**
    ```bash
    # Using Python
    python -m http.server 8000
@@ -53,7 +67,7 @@ A lightweight web interface for the ChatRPG D&D 5e MCP server.
    # Or use any other static file server
    ```
 
-6. **Open in browser:**
+7. **Open in browser:**
    ```
    http://localhost:8000/index-dev.html
    ```
@@ -64,8 +78,8 @@ A lightweight web interface for the ChatRPG D&D 5e MCP server.
    - Go to your repository settings
    - Navigate to `Settings > Secrets and variables > Actions`
    - Add two secrets:
-     - `CHATRPG_SERVER_URL`: Your Railway server URL
-     - `CHATRPG_API_KEY`: Your demo API key
+     - `MCP_SERVER_URL`: Your Railway ChatRPG server URL (e.g., `https://chatrpg-production.up.railway.app/sse`)
+     - `OPENAI_API_KEY`: Your OpenAI API key from https://platform.openai.com/api-keys
 
 2. **Enable GitHub Pages:**
    - Go to `Settings > Pages`
@@ -91,16 +105,34 @@ web-client/
 ├── css/
 │   └── style.css          # Styling
 ├── js/
-│   ├── mcp-client.js      # MCP/SSE client library
-│   └── app.js             # Main application logic
+│   └── app.js             # Main application logic (OpenAI API integration)
 ├── .github/
 │   └── workflows/
 │       └── deploy.yml     # GitHub Actions deployment
+├── dev-setup.ps1          # Windows development setup script
+├── dev-setup.sh           # Mac/Linux development setup script
 ├── .env.example           # Example environment variables
+├── DEPLOYMENT.md          # Detailed deployment guide
 └── README.md              # This file
 ```
 
 ## How It Works
+
+### Architecture
+
+```
+User → Web Client → OpenAI API (GPT-4o) → ChatRPG MCP Server
+                    ↑
+              OPENAI_API_KEY
+```
+
+1. **User sends message** to the web client
+2. **Web client calls OpenAI API** with:
+   - The conversation history
+   - ChatRPG configured as a remote MCP server in the `tools` array
+3. **OpenAI (GPT-4o) processes the message** and decides which ChatRPG tools to use
+4. **OpenAI connects to ChatRPG MCP server** to execute the tools
+5. **Results flow back** through OpenAI to the web client
 
 ### Secret Injection
 
@@ -110,19 +142,9 @@ web-client/
 
 2. **During Deployment:**
    - GitHub Actions reads secrets from repository settings
-   - Replaces `{{SERVER_URL}}` and `{{API_KEY}}` placeholders
+   - Replaces `{{MCP_SERVER_URL}}` and `{{OPENAI_API_KEY}}` placeholders
    - Deploys the processed HTML to GitHub Pages
-   - Secrets are never exposed in the repository
-
-### MCP Communication
-
-1. **SSE Connection:**
-   - Client opens EventSource to `/sse` endpoint
-   - Server sends real-time updates via Server-Sent Events
-
-2. **Tool Calls:**
-   - Client POSTs to `/tool` endpoint with tool name and parameters
-   - Server processes and responds with results
+   - Secrets are never exposed in the repository code
 
 ## Configuration
 
@@ -130,55 +152,60 @@ web-client/
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `CHATRPG_SERVER_URL` | Your Railway MCP server SSE endpoint | Yes |
-| `CHATRPG_API_KEY` | API key for authentication | Optional |
+| `MCP_SERVER_URL` | Your Railway ChatRPG MCP server SSE endpoint | Yes |
+| `OPENAI_API_KEY` | Your OpenAI API key for GPT-4o inference | Yes |
 
 ### GitHub Secrets
 
 Set these in `Settings > Secrets and variables > Actions`:
 
-- `CHATRPG_SERVER_URL`: `https://chatrpg-production.up.railway.app/sse`
-- `CHATRPG_API_KEY`: Your demo key (or leave empty if not needed)
+- `MCP_SERVER_URL`: `https://chatrpg-production.up.railway.app/sse`
+- `OPENAI_API_KEY`: Your OpenAI API key (from https://platform.openai.com/api-keys)
 
 ## Security Notes
 
 ⚠️ **Important Security Considerations:**
 
-1. **API Key Protection:**
+1. **OpenAI API Key Protection:**
    - Never commit API keys to the repository
    - Use GitHub Secrets for deployment
    - For local dev, use `.env.local` (gitignored)
+   - The API key will be visible in the deployed page source (injected at build time)
+   - Consider using a dedicated API key with usage limits
 
-2. **Demo Key Limitations:**
-   - Use a separate "demo" API key with limited permissions
-   - Don't use your production/admin keys
-   - Consider rate limiting on the server side
+2. **API Key Best Practices:**
+   - Set usage limits on your OpenAI API key at https://platform.openai.com/usage
+   - Monitor your OpenAI usage regularly
+   - Don't share the deployed GitHub Pages URL publicly if using a personal API key
+   - Consider implementing server-side API key management for production
 
 3. **CORS Configuration:**
-   - Ensure your Railway server has proper CORS headers
-   - Only allow your GitHub Pages domain
+   - Ensure your Railway ChatRPG server has proper CORS headers
+   - Allow your GitHub Pages domain (e.g., `https://username.github.io`)
 
 ## Troubleshooting
 
 ### Connection Issues
 
-If the client can't connect:
+If the client can't connect to OpenAI:
 
-1. **Check server URL:**
+1. **Check configuration:**
    ```javascript
-   console.log(window.CHATRPG_CONFIG.serverUrl);
+   console.log(window.CHATRPG_CONFIG);
+   // Should show { mcpServerUrl: "...", openaiApiKey: "sk-..." }
    ```
 
-2. **Verify CORS headers:**
-   - Server must allow `https://your-username.github.io`
+2. **Verify OpenAI API key:**
+   - Check it's a valid key starting with `sk-proj-` or `sk-`
+   - Verify it has credits at https://platform.openai.com/usage
 
 3. **Check browser console:**
-   - Look for SSE connection errors
-   - Verify network tab shows successful `/sse` connection
+   - Look for OpenAI API errors (401 = invalid key, 429 = rate limit)
+   - Verify network tab shows calls to `api.openai.com`
 
 ### API Key Issues
 
-If authentication fails:
+If OpenAI authentication fails:
 
 1. **Verify secret is set:**
    - Check GitHub repository secrets
@@ -186,7 +213,14 @@ If authentication fails:
 
 2. **Check injection worked:**
    - View page source after deployment
-   - Should NOT see `{{API_KEY}}` placeholder
+   - Should NOT see `{{OPENAI_API_KEY}}` placeholder
+   - Should see actual key like `sk-proj-...`
+
+3. **Test the API key:**
+   ```bash
+   curl https://api.openai.com/v1/models \
+     -H "Authorization: Bearer YOUR_API_KEY"
+   ```
 
 ## Development Tips
 
@@ -196,24 +230,29 @@ Edit `index.html` directly for quick testing:
 
 ```javascript
 window.CHATRPG_CONFIG = {
-    serverUrl: 'https://chatrpg-production.up.railway.app/sse',
-    apiKey: '' // Empty if server doesn't require it
+    mcpServerUrl: 'https://chatrpg-production.up.railway.app/sse',
+    openaiApiKey: 'sk-proj-your-actual-openai-key'
 };
 ```
+
+**Note:** The OpenAI API key is required for the client to function.
 
 ### Debugging
 
 Open browser DevTools and check:
 
 ```javascript
-// Check connection status
-chatApp.client.isConnected()
-
 // View current config
 window.CHATRPG_CONFIG
 
-// Send test message
-chatApp.client.callTool('get_session_context', {})
+// Check if app is processing
+chatApp.isProcessing
+
+// View conversation history
+chatApp.conversationHistory
+
+// Monitor network tab for OpenAI API calls
+// Should see POST requests to https://api.openai.com/v1/chat/completions
 ```
 
 ## Contributing

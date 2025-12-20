@@ -12,8 +12,8 @@ if (-not (Test-Path ".env.local")) {
     Write-Host "✅ Created .env.local" -ForegroundColor Green
     Write-Host ""
     Write-Host "⚠️  Please edit .env.local with your settings:" -ForegroundColor Yellow
-    Write-Host "   - CHATRPG_SERVER_URL"
-    Write-Host "   - CHATRPG_API_KEY (optional)"
+    Write-Host "   - MCP_SERVER_URL"
+    Write-Host "   - OPENAI_API_KEY"
     Write-Host ""
     exit 1
 }
@@ -28,15 +28,15 @@ Get-Content ".env.local" | ForEach-Object {
 }
 
 # Validate configuration
-if (-not $CHATRPG_SERVER_URL) {
-    Write-Host "❌ CHATRPG_SERVER_URL not set in .env.local" -ForegroundColor Red
+if (-not $MCP_SERVER_URL) {
+    Write-Host "❌ MCP_SERVER_URL not set in .env.local" -ForegroundColor Red
     exit 1
 }
 
 Write-Host "📋 Configuration:" -ForegroundColor Cyan
-Write-Host "   Server URL: $CHATRPG_SERVER_URL"
-if ($CHATRPG_API_KEY) {
-    Write-Host "   API Key: ***SET***"
+Write-Host "   MCP Server URL: $MCP_SERVER_URL"
+if ($OPENAI_API_KEY) {
+    Write-Host "   OpenAI API Key: ***SET***"
 }
 Write-Host ""
 
@@ -46,8 +46,8 @@ Copy-Item "index.html" "index-dev.html" -Force
 
 # Inject configuration
 $content = Get-Content "index-dev.html" -Raw
-$content = $content -replace '{{SERVER_URL}}', $CHATRPG_SERVER_URL
-$content = $content -replace '{{API_KEY}}', $(if ($CHATRPG_API_KEY) { $CHATRPG_API_KEY } else { '' })
+$content = $content -replace '{{MCP_SERVER_URL}}', $MCP_SERVER_URL
+$content = $content -replace '{{OPENAI_API_KEY}}', $(if ($OPENAI_API_KEY) { $OPENAI_API_KEY } else { '' })
 Set-Content "index-dev.html" $content
 
 Write-Host "✅ Created index-dev.html with your configuration" -ForegroundColor Green
