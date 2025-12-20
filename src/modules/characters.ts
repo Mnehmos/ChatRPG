@@ -691,17 +691,45 @@ function getCharacterTypeEmoji(type: string): string {
   return emojiMap[type] || '🎭';
 }
 
-// Find character by name (returns ID)
-function findCharacterByName(name: string): string | null {
+/**
+ * Warning types for character lookup operations.
+ */
+export enum CharacterLookupWarning {
+  DUPLICATE_NAMES = 'duplicate_names',
+  NONE = 'none',
+}
+
+/**
+ * Result of character lookup with warning information.
+ */
+export interface CharacterLookupResult {
+  characterId: string | null;
+  warning: CharacterLookupWarning;
+  duplicateCount?: number;
+  duplicateIds?: string[];
+}
+
+/**
+ * Find character by name with duplicate detection.
+ * Used by combat module for character reference resolution.
+ *
+ * @param name - Character name (case-insensitive)
+ * @returns Lookup result with warning if duplicates found
+ */
+export function findCharacterByNameWithWarnings(name: string): CharacterLookupResult {
   const dataDir = path.join(DATA_ROOT, 'characters');
 
   // Ensure directory exists
   if (!fs.existsSync(dataDir)) {
-    return null;
+    return {
+      characterId: null,
+      warning: CharacterLookupWarning.NONE,
+    };
   }
 
   try {
     const files = fs.readdirSync(dataDir);
+    const matches: Array<{ id: string; name: string }> = [];
 
     for (const file of files) {
       if (!file.endsWith('.json')) continue;
@@ -712,14 +740,48 @@ function findCharacterByName(name: string): string | null {
 
       // Case-insensitive name match
       if (character.name.toLowerCase() === name.toLowerCase()) {
-        return character.id;
+        matches.push({ id: character.id, name: character.name });
       }
     }
 
-    return null;
+    if (matches.length === 0) {
+      return {
+        characterId: null,
+        warning: CharacterLookupWarning.NONE,
+      };
+    }
+
+    if (matches.length > 1) {
+      return {
+        characterId: matches[0].id,
+        warning: CharacterLookupWarning.DUPLICATE_NAMES,
+        duplicateCount: matches.length,
+        duplicateIds: matches.map(m => m.id),
+      };
+    }
+
+    return {
+      characterId: matches[0].id,
+      warning: CharacterLookupWarning.NONE,
+    };
   } catch (err) {
-    return null;
+    return {
+      characterId: null,
+      warning: CharacterLookupWarning.NONE,
+    };
   }
+}
+
+/**
+ * Find character by name (returns ID only).
+ * Legacy function for backward compatibility.
+ *
+ * @param name - Character name (case-insensitive)
+ * @returns Character ID or null if not found
+ * @deprecated Use findCharacterByNameWithWarnings for duplicate detection
+ */
+export function findCharacterByName(name: string): string | null {
+  return findCharacterByNameWithWarnings(name).characterId;
 }
 
 // ============================================================

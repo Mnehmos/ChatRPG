@@ -943,8 +943,36 @@ function formatExhaustionLevel(targetId: string, level: number, action: string):
 // ENCOUNTER MANAGEMENT
 // ============================================================
 
-// Encounter Participant Schema
-const ParticipantSchema = z.object({
+/**
+ * Participant source types for encounter tracking.
+ *
+ * - **persistent**: Loaded from persistent character storage (PC/NPC with saved state)
+ * - **ephemeral**: Created on-the-fly for this encounter only (temporary enemies, minions)
+ */
+export enum ParticipantSource {
+  PERSISTENT = 'persistent',
+  EPHEMERAL = 'ephemeral',
+}
+
+// ============================================================
+// CHARACTER REFERENCE FOR STATEFUL ENCOUNTERS
+// ============================================================
+
+/**
+ * Participant Schema supporting two modes:
+ *
+ * **Manual Mode** (provide all fields):
+ * - Explicitly provide id, name, hp, maxHp, ac, position, etc.
+ * - Used for custom NPCs, enemies, or when you want full control
+ *
+ * **Reference Mode** (provide characterId or characterName):
+ * - Automatically pulls current state from persistent character
+ * - Auto-populates: hp, maxHp, ac, speed, size, resistances, etc.
+ * - Can override specific fields (e.g., position, isEnemy)
+ * - Requires: characterId OR characterName
+ * - Optional: id (defaults to characterId), position (defaults to 0,0,0)
+ */
+const ManualParticipantSchema = z.object({
   id: z.string(),
   name: z.string(),
   hp: z.number().min(0),  // Allow 0 HP for dying/unconscious characters
@@ -962,6 +990,38 @@ const ParticipantSchema = z.object({
   // ADR-005: Link to persistent character for state synchronization
   characterId: z.string().optional().describe('Links participant to persistent character for state sync'),
 });
+
+const CharacterReferenceParticipantSchema = z.object({
+  // Character lookup (one required)
+  characterId: z.string().optional().describe('Character UUID for lookup'),
+  characterName: z.string().optional().describe('Character name for lookup (case-insensitive)'),
+
+  // Optional overrides
+  id: z.string().optional().describe('Participant ID (defaults to characterId)'),
+  position: PositionSchema.optional().describe('Starting position (defaults to 0,0,0)'),
+  isEnemy: z.boolean().optional().describe('Override enemy status'),
+  hp: z.number().min(0).optional().describe('Override current HP (defaults to character HP)'),
+
+  // Optional tactical info
+  surprised: z.boolean().optional().describe('Mark as surprised in first round'),
+}).refine(data => data.characterId || data.characterName, {
+  message: 'Either characterId or characterName must be provided in reference mode',
+});
+
+/**
+ * Input schema accepting both manual and reference modes.
+ * Internally, all participants are resolved to ManualParticipantSchema.
+ */
+const ParticipantInputSchema = z.union([
+  ManualParticipantSchema,
+  CharacterReferenceParticipantSchema,
+]);
+
+/**
+ * Internal participant type (always fully resolved).
+ * Used throughout the encounter system for type safety.
+ */
+const ParticipantSchema = ManualParticipantSchema;
 
 // Terrain Schema
 const TerrainSchema = z.object({
@@ -981,7 +1041,7 @@ const TerrainSchema = z.object({
 // Create Encounter Schema
 export const createEncounterSchema = z.object({
   seed: z.string().optional(),
-  participants: z.array(ParticipantSchema).min(1),
+  participants: z.array(ParticipantInputSchema).min(1),
   terrain: TerrainSchema.optional(),
   lighting: LightSchema.default('bright'),
   surprise: z.array(z.string()).optional(),
@@ -1054,14 +1114,160 @@ function rollD20(seeded?: boolean): number {
   return Math.floor(Math.random() * 20) + 1;
 }
 
+/**
+ * Result of participant resolution with metadata.
+ */
+interface ResolvedParticipant {
+  participant: z.infer<typeof ManualParticipantSchema>;
+  source: ParticipantSource;
+  warning?: CharacterLookupWarning;
+  duplicateCount?: number;
+}
+
+/**
+ * Resolve a character reference and build a full participant object.
+ *
+ * This function enables stateful encounters by automatically pulling
+ * current character state from persistent storage and in-memory stores.
+ *
+ * **Data Sources:**
+ * - Character JSON file: name, stats, hp, maxHp, ac, speed, size, resistances, etc.
+ * - Condition store: active conditions (blinded, poisoned, exhaustion, etc.)
+ * - Spell slot store: current spell slot usage
+ *
+ * @param input - Character reference with optional overrides
+ * @returns Resolved participant with metadata (source, warnings)
+ * @throws Error if character not found or data invalid
+ */
+function resolveCharacterParticipant(
+  input: z.infer<typeof CharacterReferenceParticipantSchema>
+): ResolvedParticipant {
+  // Resolve character ID from name if needed
+  let characterId = input.characterId;
+  let lookupWarning: CharacterLookupWarning = CharacterLookupWarning.NONE;
+  let duplicateCount: number | undefined;
+
+  if (!characterId && input.characterName) {
+    const lookupResult = findCharacterByNameWithWarnings(input.characterName);
+    if (!lookupResult.characterId) {
+      throw new Error(`Character not found with name: ${input.characterName}`);
+    }
+    characterId = lookupResult.characterId;
+    lookupWarning = lookupResult.warning;
+    duplicateCount = lookupResult.duplicateCount;
+  }
+
+  if (!characterId) {
+    throw new Error('Character ID resolution failed - this should not happen due to schema validation');
+  }
+
+  // Load character from persistent storage
+  const charResult = getCharacter({ characterId });
+  if (!charResult.success || !charResult.character) {
+    throw new Error(`Character not found: ${characterId}`);
+  }
+
+  const character = charResult.character;
+
+  // Calculate initiative bonus from DEX modifier
+  const dexModifier = Math.floor((character.stats.dex - 10) / 2);
+
+  // Build participant object
+  const participant: z.infer<typeof ManualParticipantSchema> = {
+    // Identity
+    id: input.id || characterId,
+    name: character.name,
+    characterId: characterId,  // Always link to persistent character
+
+    // Combat stats (use character's current state)
+    hp: input.hp !== undefined ? input.hp : character.hp,
+    maxHp: character.maxHp,
+    ac: character.ac,
+    initiativeBonus: dexModifier,
+    speed: character.speed,
+    size: (character as any).size || 'medium',
+
+    // Position (default or override)
+    position: input.position || { x: 0, y: 0, z: 0 },
+
+    // Tactical status
+    isEnemy: input.isEnemy !== undefined ? input.isEnemy : (character.characterType === 'enemy'),
+
+    // Damage modifiers
+    resistances: character.resistances as any,
+    immunities: character.immunities as any,
+    vulnerabilities: character.vulnerabilities as any,
+    conditionImmunities: character.conditionImmunities as any,
+  };
+
+  return {
+    participant,
+    source: ParticipantSource.PERSISTENT,
+    warning: lookupWarning !== CharacterLookupWarning.NONE ? lookupWarning : undefined,
+    duplicateCount,
+  };
+}
+
 // Create Encounter Handler
 export function createEncounter(input: CreateEncounterInput): string {
   // Parse and validate input - this applies all defaults
   const parsed = createEncounterSchema.parse(input);
-  
-  // Validate unique participant IDs
+
+  // Resolve all participants (character references → full participant objects)
+  const resolvedParticipants: Array<z.infer<typeof ManualParticipantSchema> & { surprised?: boolean }> = [];
+  const participantMetadata: Array<{
+    source: ParticipantSource;
+    warning?: CharacterLookupWarning;
+    duplicateCount?: number;
+  }> = [];
+  const surpriseSet = new Set(parsed.surprise || []);
+
+  for (const rawParticipant of parsed.participants) {
+    // Detect mode: check if this looks like a character reference
+    const isReference = 'characterId' in rawParticipant || 'characterName' in rawParticipant;
+
+    let participant: z.infer<typeof ManualParticipantSchema>;
+    let wasSurprised = false;
+    let source: ParticipantSource;
+    let warning: CharacterLookupWarning | undefined;
+    let duplicateCount: number | undefined;
+
+    if (isReference) {
+      // Reference mode: resolve character from persistent storage
+      const refInput = rawParticipant as z.infer<typeof CharacterReferenceParticipantSchema>;
+      const resolved = resolveCharacterParticipant(refInput);
+
+      participant = resolved.participant;
+      source = resolved.source;
+      warning = resolved.warning;
+      duplicateCount = resolved.duplicateCount;
+
+      // Check for surprised flag in the reference input
+      wasSurprised = refInput.surprised || false;
+    } else {
+      // Manual mode: use as-is (ephemeral participant)
+      participant = rawParticipant as z.infer<typeof ManualParticipantSchema>;
+      source = ParticipantSource.EPHEMERAL;
+
+      // Check if ID is in surprise set
+      wasSurprised = surpriseSet.has(participant.id);
+    }
+
+    resolvedParticipants.push({
+      ...participant,
+      surprised: wasSurprised,
+    });
+
+    participantMetadata.push({
+      source,
+      warning,
+      duplicateCount,
+    });
+  }
+
+  // Validate unique participant IDs (after resolution)
   const ids = new Set<string>();
-  for (const p of parsed.participants) {
+  for (const p of resolvedParticipants) {
     if (ids.has(p.id)) {
       throw new Error(`Duplicate participant ID: ${p.id}`);
     }
@@ -1077,18 +1283,15 @@ export function createEncounter(input: CreateEncounterInput): string {
   // Terrain and lighting already have defaults applied by parse
   const terrain = parsed.terrain || { width: 20, height: 20 };
   const lighting = parsed.lighting;
-  const surpriseSet = new Set(parsed.surprise || []);
 
-  // Roll initiative for all participants and mark surprised
-  const participantsWithInitiative = parsed.participants.map(p => {
+  // Roll initiative for all participants
+  const participantsWithInitiative = resolvedParticipants.map(p => {
     const initiativeRoll = rollD20(seeded);
     const initiative = initiativeRoll + p.initiativeBonus;
-    const surprised = surpriseSet.has(p.id);
-    
+
     return {
       ...p,
       initiative,
-      surprised,
     };
   });
 
@@ -1113,12 +1316,22 @@ export function createEncounter(input: CreateEncounterInput): string {
 
   encounterStore.set(encounterId, encounterState);
 
-  // Format output
-  return formatEncounterCreated(encounterState);
+  // Capture snapshots for state sync
+  captureParticipantSnapshots(encounterId, encounterState.participants);
+
+  // Format output with metadata
+  return formatEncounterCreated(encounterState, participantMetadata);
 }
 
 // Format encounter creation output
-function formatEncounterCreated(encounter: EncounterState): string {
+function formatEncounterCreated(
+  encounter: EncounterState,
+  metadata?: Array<{
+    source: ParticipantSource;
+    warning?: CharacterLookupWarning;
+    duplicateCount?: number;
+  }>
+): string {
   const content: string[] = [];
   const WIDTH = 72;
 
@@ -1146,7 +1359,11 @@ function formatEncounterCreated(encounter: EncounterState): string {
     const p = encounter.participants[i];
     const num = (i + 1).toString().padStart(2);
     const name = p.name.padEnd(19).substring(0, 19);
-    const init = p.initiative.toString().padStart(4);
+    // Show initiative with bonus for clarity
+    const initDisplay = p.initiativeBonus >= 0
+      ? `${p.initiative} (+${p.initiativeBonus})`
+      : `${p.initiative} (${p.initiativeBonus})`;
+    const init = initDisplay.padStart(9).substring(0, 9);
     const hp = `${p.hp}/${p.maxHp}`.padEnd(11).substring(0, 11);
     const ac = p.ac.toString().padStart(2);
     
@@ -1173,14 +1390,46 @@ function formatEncounterCreated(encounter: EncounterState): string {
   }
 
   content.push('');
-  
+
+  // Participant source and warnings
+  if (metadata && metadata.length > 0) {
+    content.push('-'.repeat(WIDTH));
+    content.push('');
+    content.push(centerText('PARTICIPANT SOURCES', WIDTH));
+    content.push('');
+
+    for (let i = 0; i < encounter.participants.length; i++) {
+      const p = encounter.participants[i];
+      const meta = metadata[i];
+      const sourceIcon = meta.source === ParticipantSource.PERSISTENT ? '[P]' : '[E]';
+      const sourceLabel = meta.source === ParticipantSource.PERSISTENT ? 'persistent' : 'ephemeral';
+
+      let line = `${sourceIcon} ${p.name}: ${sourceLabel}`;
+
+      if (meta.source === ParticipantSource.PERSISTENT) {
+        line += ` (HP: ${p.hp}/${p.maxHp}, AC: ${p.ac})`;
+      }
+
+      content.push(padText(line, WIDTH, 'left'));
+
+      // Show warning if duplicate names detected
+      if (meta.warning === CharacterLookupWarning.DUPLICATE_NAMES) {
+        const warnLine = `  [!] WARNING: ${meta.duplicateCount} characters found with this name (using first match)`;
+        content.push(padText(warnLine, WIDTH, 'left'));
+      }
+    }
+
+    content.push('');
+  }
+
   // Initiative summary for each participant (helps with test regex matching)
   content.push('Ã¢â€â‚¬'.repeat(WIDTH));
   content.push('');
   for (const p of encounter.participants) {
     const surprised = p.surprised ? ' (SURPRISED)' : '';
     const sizeStr = p.size ? ` [${p.size}]` : '';
-    content.push(padText(`${p.name}: Initiative: ${p.initiative}${sizeStr}${surprised}`, WIDTH, 'left'));
+    const bonusDisplay = p.initiativeBonus >= 0 ? `+${p.initiativeBonus}` : `${p.initiativeBonus}`;
+    content.push(padText(`${p.name}: ${p.initiative} (${bonusDisplay})${sizeStr}${surprised}`, WIDTH, 'left'));
   }
   
   content.push('');
@@ -1703,7 +1952,7 @@ export function clearAllEncounters(): void {
 
 import { ActionTypeSchema, ActionCostSchema, WeaponTypeSchema, type ActionType, type ActionCost, type WeaponType, type DamageType, type Position } from '../types.js';
 import { parseDice } from './dice.js';
-import { expendSpellSlot, hasSpellSlot, getCharacter } from './characters.js';
+import { expendSpellSlot, hasSpellSlot, getCharacter, findCharacterByName, findCharacterByNameWithWarnings, CharacterLookupWarning } from './characters.js';
 
 // ============================================================
 // EXECUTE ACTION SCHEMA

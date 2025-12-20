@@ -264,7 +264,8 @@ describe('create_encounter', () => {
 
       const text = getTextContent(result);
       // Initiative should be between 5 (1+4) and 24 (20+4)
-      const initiativeMatch = text.match(/Initiative[:\s]+(\d+)/i);
+      // New format: "22 (+4)" shows rolled initiative with bonus
+      const initiativeMatch = text.match(/(\d+)\s*\(\+\d+\)/);
       expect(initiativeMatch).not.toBeNull();
       const initiative = parseInt(initiativeMatch![1]);
       expect(initiative).toBeGreaterThanOrEqual(5);
@@ -321,7 +322,8 @@ describe('create_encounter', () => {
       const text = getTextContent(result);
       expect(text).toContain('Zombie');
       // Initiative should be between -1 (1-2) and 18 (20-2)
-      const initiativeMatch = text.match(/Initiative[:\s]+(-?\d+)/i);
+      // New format: "15 (-2)" shows rolled initiative with negative bonus
+      const initiativeMatch = text.match(/(-?\d+)\s*\(-?\d+\)/);
       expect(initiativeMatch).not.toBeNull();
       const initiative = parseInt(initiativeMatch![1]);
       expect(initiative).toBeGreaterThanOrEqual(-1);
