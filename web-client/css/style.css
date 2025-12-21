@@ -209,6 +209,8 @@ h1 {
   white-space: pre;
   overflow-x: auto;
   max-height: none;
+  /* Use fonts that support box-drawing characters */
+  font-family: "Cascadia Code", "Consolas", "DejaVu Sans Mono", "Lucida Console", monospace;
 }
 
 .message-content p {

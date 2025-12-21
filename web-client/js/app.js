@@ -346,6 +346,9 @@ You are the DM. Don't explain - PLAY.`;
                 }
 
                 if (outputText) {
+                    // Debug: Check if outputText is clean before insertion
+                    console.log('📝 outputText before DOM insertion (first 100 chars):', outputText.substring(0, 100));
+                    console.log('📝 Contains garbled pattern?', /Ã¢|â€/.test(outputText));
                     // Output shown prominently - no collapsible wrapper
                     content += `
 <pre class="tool-output-display"><code>${outputText}</code></pre>`;
