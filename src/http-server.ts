@@ -139,6 +139,25 @@ const httpServer = createServer(async (req, res) => {
     return;
   }
 
+  // List tools endpoint - for OpenRouter and other non-MCP clients
+  if (url.pathname === '/tools') {
+    if (req.method === 'GET') {
+      const tools = Object.values(toolRegistry).map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      }));
+
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ tools }));
+      return;
+    }
+
+    res.writeHead(405);
+    res.end('Method Not Allowed');
+    return;
+  }
+
   // Direct tool call endpoint - bypasses OpenAI for clean UTF-8 output
   if (url.pathname === '/tool') {
     if (req.method === 'POST') {
@@ -182,5 +201,6 @@ const httpServer = createServer(async (req, res) => {
 httpServer.listen(PORT, () => {
   console.error(`🎲 RPG-Lite MCP Server running on port ${PORT}`);
   console.error(`   SSE endpoint: http://localhost:${PORT}/sse`);
+  console.error(`   Tools list:   http://localhost:${PORT}/tools`);
   console.error(`   Health check: http://localhost:${PORT}/health`);
 });
