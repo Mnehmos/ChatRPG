@@ -560,7 +560,9 @@ You are the DM. Don't explain - PLAY.`;
                 stream: true,
                 tools: tools.length > 0 ? tools : undefined,
                 provider: {
-                    // Require a provider that supports tool use
+                    // Force DeepInfra which supports tool calling for this model
+                    order: ['DeepInfra'],
+                    allow_fallbacks: false,
                     require_parameters: true
                 }
             })
