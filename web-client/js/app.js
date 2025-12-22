@@ -7,7 +7,7 @@ class ChatApp {
     constructor() {
         this.conversationHistory = [];
         this.isProcessing = false;
-        this.currentModel = 'openai'; // Default to OpenAI
+        this.currentModel = 'openrouter-oss'; // Default to gpt-oss-120b
 
         // DOM elements
         this.messagesContainer = document.getElementById('messages');
