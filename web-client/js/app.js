@@ -692,13 +692,22 @@ You are the DM. Don't explain - PLAY.`;
             }
         }
 
-        // Execute tool calls and add results
+        // Execute tool calls and collect results for follow-up
+        const toolResults = [];
         for (const tc of toolCalls) {
             if (!tc || !tc.name) continue;
 
             try {
                 const args = JSON.parse(tc.arguments || '{}');
                 const result = await this.callToolDirect(tc.name, args);
+
+                // Store for follow-up call
+                toolResults.push({
+                    tool_call_id: tc.id,
+                    name: tc.name,
+                    args: args,
+                    result: result
+                });
 
                 const icon = result ? '✅' : '❌';
                 let content = `**${icon} Tool:** \`${tc.name}\``;
@@ -734,7 +743,131 @@ You are the DM. Don't explain - PLAY.`;
             });
         }
 
+        // If we had tool calls, make a follow-up call to get narrative response
+        if (toolResults.length > 0 && !currentTextContent) {
+            const narrativeResponse = await this.getToolNarrative(toolResults, availableTools);
+            if (narrativeResponse) {
+                responseItems.push({
+                    type: 'text',
+                    role: 'assistant',
+                    content: narrativeResponse,
+                    _alreadyRendered: true // Already streamed in getToolNarrative
+                });
+            }
+        }
+
         return responseItems;
+    }
+
+    /**
+     * Make a follow-up call to get narrative after tool execution
+     */
+    async getToolNarrative(toolResults, tools) {
+        const systemPrompt = `You are a Dungeon Master. The tools have been executed and returned results.
+Now narrate what happened based on the tool outputs. Be dramatic and immersive.
+Do NOT call any more tools - just describe the results narratively.`;
+
+        // Build messages with tool results
+        const messages = [
+            { role: 'system', content: systemPrompt }
+        ];
+
+        // Add recent conversation context
+        for (const msg of this.conversationHistory.slice(-4)) {
+            messages.push({
+                role: msg.role === 'user' ? 'user' : 'assistant',
+                content: msg.content
+            });
+        }
+
+        // Add tool results as context
+        const toolSummary = toolResults.map(tr =>
+            `Tool "${tr.name}" was called with ${JSON.stringify(tr.args)} and returned:\n${tr.result}`
+        ).join('\n\n');
+
+        messages.push({
+            role: 'user',
+            content: `The following tool actions just occurred. Narrate what happened:\n\n${toolSummary}`
+        });
+
+        const modelMap = {
+            'openrouter-oss': 'openai/gpt-oss-120b',
+            'openrouter-nemotron': 'nvidia/nemotron-3-nano-30b-a3b'
+        };
+        const selectedModel = modelMap[this.currentModel] || 'openai/gpt-oss-120b';
+
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${window.CHATRPG_CONFIG.openrouterApiKey}`,
+                'HTTP-Referer': window.location.origin,
+                'X-Title': 'ChatRPG'
+            },
+            body: JSON.stringify({
+                model: selectedModel,
+                messages: messages,
+                stream: true
+                // No tools - we just want narrative
+            })
+        });
+
+        if (!response.ok) {
+            console.error('Follow-up narrative call failed');
+            return null;
+        }
+
+        // Stream the narrative response
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let narrativeText = '';
+
+        let streamingDiv = document.createElement('div');
+        streamingDiv.className = 'message assistant streaming';
+        streamingDiv.dataset.timestamp = Date.now();
+        let contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content';
+        streamingDiv.appendChild(contentDiv);
+        this.messagesContainer.appendChild(streamingDiv);
+
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const eventData = line.slice(6);
+                    if (eventData === '[DONE]') continue;
+
+                    try {
+                        const event = JSON.parse(eventData);
+                        const delta = event.choices?.[0]?.delta;
+
+                        if (delta?.content) {
+                            narrativeText += delta.content;
+                            contentDiv.innerHTML = this.formatMessage(narrativeText) + '<span class="streaming-cursor">▌</span>';
+                            this.scrollToBottom();
+                        }
+                    } catch (e) {
+                        // Ignore parse errors
+                    }
+                }
+            }
+        } finally {
+            reader.releaseLock();
+        }
+
+        // Finalize
+        streamingDiv.classList.remove('streaming');
+        contentDiv.innerHTML = this.formatMessage(narrativeText);
+
+        return narrativeText;
     }
 
     /**
