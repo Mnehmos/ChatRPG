@@ -555,16 +555,10 @@ You are the DM. Don't explain - PLAY.`;
                 'X-Title': 'ChatRPG'
             },
             body: JSON.stringify({
-                model: 'openai/gpt-oss-120b',
+                model: 'nvidia/nemotron-3-nano-30b-a3b:free',
                 messages: messages,
                 stream: true,
-                tools: tools.length > 0 ? tools : undefined,
-                provider: {
-                    // Force DeepInfra which supports tool calling for this model
-                    order: ['DeepInfra'],
-                    allow_fallbacks: false,
-                    require_parameters: true
-                }
+                tools: tools.length > 0 ? tools : undefined
             })
         });
 
