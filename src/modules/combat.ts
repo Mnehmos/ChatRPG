@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { randomUUID } from 'crypto';
-import { ConditionSchema, AbilitySchema, PositionSchema, SizeSchema, DamageTypeSchema, LightSchema, RollModeSchema, type Condition, type Ability } from '../types.js';
+import { ConditionSchema, AbilitySchema, PositionSchema, SizeSchema, DamageTypeSchema, LightSchema, RollModeSchema, AoeShapeSchema, type Condition, type Ability } from '../types.js';
 import { fuzzyEnum } from '../fuzzy-enum.js';
 import { createBox, centerText, padText, BOX, createStatusBar } from './ascii-art.js';
 import { broadcastToEncounter } from '../websocket.js';
@@ -2071,6 +2071,24 @@ export const executeActionSchema = z.object({
   spellName: z.string().optional(),
   /** If true, use warlock pact magic slots instead of standard slots */
   pactMagic: z.boolean().optional(),
+
+  // AoE spell options
+  /** AoE shape: sphere, cube, cone, line, cylinder */
+  aoeShape: AoeShapeSchema.optional(),
+  /** AoE radius/size in feet (e.g., 20 for Fireball's 20ft radius) */
+  aoeRadius: z.number().min(5).max(120).optional(),
+  /** Center point for AoE spell (defaults to target position if not specified) */
+  aoeCenter: PositionSchema.optional(),
+  /** Save ability required (dex, con, etc.) */
+  saveAbility: AbilitySchema.optional(),
+  /** Save DC for the spell */
+  saveDC: z.number().min(1).max(30).optional(),
+  /** Damage on failed save (e.g., "8d6") */
+  spellDamage: z.string().optional(),
+  /** Damage type for the spell */
+  spellDamageType: DamageTypeSchema.optional(),
+  /** If true, targets take half damage on successful save */
+  halfOnSave: z.boolean().optional(),
 });
 
 export type ExecuteActionInput = z.infer<typeof executeActionSchema>;
@@ -2815,7 +2833,13 @@ function handleCastSpellAction(
   const pactMagic = input.pactMagic || false;
   // Use characterId for spell slot tracking if available, otherwise fall back to participantId
   const spellSlotActorId = actor.characterId || actor.id;
-  
+
+  // Format the ordinal for display
+  const ordinals = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th'];
+  const slotLabel = pactMagic
+    ? 'Pact Magic Slot'
+    : `${ordinals[slotLevel - 1] || slotLevel + 'th'} Level Slot`;
+
   // Cantrips don't require slots
   if (slotLevel === 0) {
     const content: string[] = [];
@@ -2829,10 +2853,10 @@ function handleCastSpellAction(
     content.push('•'.repeat(50));
     content.push('');
     content.push(padText(`Action Cost: ${input.actionCost || 'action'}`, 50, 'left'));
-    
+
     return createBox('CAST SPELL', content, undefined, 'HEAVY');
   }
-  
+
   // Check if actor has required spell slot
   if (!hasSpellSlot(spellSlotActorId, slotLevel, pactMagic)) {
     const slotType = pactMagic ? 'pact magic slot' : `level ${slotLevel} spell slot`;
@@ -2844,13 +2868,13 @@ function handleCastSpellAction(
   if (!expendResult.success) {
     throw new Error(expendResult.error || 'Failed to expend spell slot');
   }
-  
-  // Format the ordinal for display
-  const ordinals = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th'];
-  const slotLabel = pactMagic 
-    ? 'Pact Magic Slot' 
-    : `${ordinals[slotLevel - 1] || slotLevel + 'th'} Level Slot`;
-  
+
+  // Check if this is an AoE spell
+  if (input.aoeShape && input.aoeRadius && input.spellDamage && input.saveAbility && input.saveDC) {
+    return handleAoeSpell(encounter, actor, input, spellName, slotLabel);
+  }
+
+  // Non-AoE spell - simple slot expenditure
   const content: string[] = [];
   content.push(centerText(`${actor.name.toUpperCase()} CASTS SPELL`, 50));
   content.push('');
@@ -2859,25 +2883,291 @@ function handleCastSpellAction(
   content.push(centerText(`Spell: ${spellName}`, 50));
   content.push(centerText(`Slot Used: ${slotLabel}`, 50));
   content.push('');
-  
+
   // Add target info if specified
   if (input.targetId || input.targetName) {
     const target = input.targetId
       ? encounter.participants.find(p => p.id === input.targetId)
       : encounter.participants.find(p => p.name.toLowerCase() === input.targetName?.toLowerCase());
-    
+
     if (target) {
       content.push(centerText(`Target: ${target.name}`, 50));
       content.push('');
     }
   }
-  
+
   content.push('•'.repeat(50));
   content.push('');
   content.push(padText(`Action Cost: ${input.actionCost || 'action'}`, 50, 'left'));
   content.push(padText('✓ Spell slot expended', 50, 'left'));
-  
+
   return createBox('CAST SPELL', content, undefined, 'HEAVY');
+}
+
+/**
+ * Handle AoE spell casting with damage calculation.
+ * Finds all targets in the AoE, rolls saves, calculates damage, and applies HP changes.
+ */
+function handleAoeSpell(
+  encounter: EncounterState,
+  actor: Participant & { initiative: number; surprised?: boolean },
+  input: ExecuteActionInput,
+  spellName: string,
+  slotLabel: string
+): string {
+  const aoeShape = input.aoeShape!;
+  const aoeRadius = input.aoeRadius!; // in feet
+  const saveDC = input.saveDC!;
+  const saveAbility = input.saveAbility!;
+  const damageExpr = input.spellDamage!;
+  const damageType = input.spellDamageType || 'fire';
+  const halfOnSave = input.halfOnSave ?? true;
+
+  // Determine AoE center - use explicit center, target position, or throw error
+  let center: { x: number; y: number; z: number };
+  if (input.aoeCenter) {
+    center = { x: input.aoeCenter.x, y: input.aoeCenter.y, z: input.aoeCenter.z ?? 0 };
+  } else if (input.targetId || input.targetName) {
+    const target = input.targetId
+      ? encounter.participants.find(p => p.id === input.targetId)
+      : encounter.participants.find(p => p.name.toLowerCase() === input.targetName?.toLowerCase());
+    if (target) {
+      center = { x: target.position.x, y: target.position.y, z: target.position.z ?? 0 };
+    } else {
+      throw new Error('AoE spell requires a valid target or aoeCenter position');
+    }
+  } else {
+    throw new Error('AoE spell requires either a target or aoeCenter position');
+  }
+
+  // Convert radius from feet to grid squares (5ft per square)
+  const radiusSquares = aoeRadius / 5;
+
+  // Find all participants in the AoE (excluding the caster for most AoE spells)
+  const affectedTargets: Array<{
+    participant: Participant & { initiative: number };
+    distance: number;
+  }> = [];
+
+  for (const p of encounter.participants) {
+    // Skip the caster (they're assumed to position the spell to avoid themselves)
+    if (p.id === actor.id) continue;
+
+    // Calculate distance from center (using Euclidean for sphere/cylinder, Chebyshev for cube)
+    const dx = p.position.x - center.x;
+    const dy = p.position.y - center.y;
+    let distance: number;
+
+    if (aoeShape === 'sphere' || aoeShape === 'cylinder') {
+      distance = Math.sqrt(dx * dx + dy * dy);
+    } else if (aoeShape === 'cube') {
+      distance = Math.max(Math.abs(dx), Math.abs(dy));
+    } else if (aoeShape === 'cone') {
+      // Simplified cone - emanates from caster toward center point
+      // For now, treat as sphere from center
+      distance = Math.sqrt(dx * dx + dy * dy);
+    } else if (aoeShape === 'line') {
+      // Simplified line - check if within width of line from caster to center
+      distance = Math.sqrt(dx * dx + dy * dy);
+    } else {
+      distance = Math.sqrt(dx * dx + dy * dy);
+    }
+
+    if (distance <= radiusSquares) {
+      affectedTargets.push({ participant: p, distance });
+    }
+  }
+
+  // Roll spell damage once (same roll for all targets)
+  const damageRoll = rollDiceExpression(damageExpr);
+  const baseDamage = damageRoll.total;
+
+  // Process each affected target
+  const results: Array<{
+    name: string;
+    saveRoll: number;
+    saveTotal: number;
+    saved: boolean;
+    damage: number;
+    newHp: number;
+    maxHp: number;
+    killed: boolean;
+  }> = [];
+
+  for (const { participant } of affectedTargets) {
+    // Get save modifier (use DEX for most, but respect saveAbility)
+    const saveModifier = getAbilityModifier(participant, saveAbility);
+
+    // Roll saving throw
+    const saveRoll = Math.floor(Math.random() * 20) + 1;
+    const saveTotal = saveRoll + saveModifier;
+    const saved = saveTotal >= saveDC;
+
+    // Calculate damage (half on save if applicable)
+    let damage = baseDamage;
+    if (saved && halfOnSave) {
+      damage = Math.floor(damage / 2);
+    } else if (saved && !halfOnSave) {
+      damage = 0;
+    }
+
+    // Apply damage resistances/immunities/vulnerabilities
+    const adjustedDamage = applyDamageModifiers(participant, damage, damageType);
+
+    // Apply damage to participant
+    const oldHp = participant.hp;
+    participant.hp = Math.max(0, participant.hp - adjustedDamage);
+    const killed = oldHp > 0 && participant.hp === 0;
+
+    results.push({
+      name: participant.name,
+      saveRoll,
+      saveTotal,
+      saved,
+      damage: adjustedDamage,
+      newHp: participant.hp,
+      maxHp: participant.maxHp,
+      killed,
+    });
+  }
+
+  // Build output
+  const content: string[] = [];
+  const WIDTH = 60;
+
+  content.push(centerText(`${actor.name.toUpperCase()} CASTS ${spellName.toUpperCase()}`, WIDTH));
+  content.push('');
+  content.push('•'.repeat(WIDTH));
+  content.push('');
+  content.push(centerText(`${aoeShape.toUpperCase()} - ${aoeRadius}ft radius`, WIDTH));
+  content.push(centerText(`Centered at (${center.x}, ${center.y})`, WIDTH));
+  content.push(centerText(`Slot Used: ${slotLabel}`, WIDTH));
+  content.push('');
+  content.push('─'.repeat(WIDTH));
+  content.push(centerText(`DAMAGE ROLL: ${damageRoll.breakdown} = ${baseDamage} ${damageType}`, WIDTH));
+  content.push(centerText(`Save: DC ${saveDC} ${saveAbility.toUpperCase()}${halfOnSave ? ' (half on save)' : ''}`, WIDTH));
+  content.push('─'.repeat(WIDTH));
+  content.push('');
+
+  if (results.length === 0) {
+    content.push(centerText('No targets in area of effect', WIDTH));
+  } else {
+    content.push(padText('TARGETS HIT:', WIDTH, 'left'));
+    content.push('');
+
+    for (const r of results) {
+      const saveResult = r.saved ? '✓ SAVE' : '✗ FAIL';
+      const hpBar = `[${r.newHp}/${r.maxHp}]`;
+      const killMark = r.killed ? ' ☠ DEAD' : '';
+
+      content.push(padText(`${r.name}`, WIDTH, 'left'));
+      content.push(padText(`  Save: ${r.saveRoll}+${r.saveTotal - r.saveRoll}=${r.saveTotal} ${saveResult}`, WIDTH, 'left'));
+      content.push(padText(`  Damage: ${r.damage} ${damageType} → HP ${hpBar}${killMark}`, WIDTH, 'left'));
+    }
+  }
+
+  content.push('');
+  content.push('•'.repeat(WIDTH));
+  content.push('');
+
+  // Summary
+  const totalDamage = results.reduce((sum, r) => sum + r.damage, 0);
+  const kills = results.filter(r => r.killed).length;
+
+  content.push(padText(`Total Damage Dealt: ${totalDamage}`, WIDTH, 'left'));
+  content.push(padText(`Targets Hit: ${results.length}`, WIDTH, 'left'));
+  if (kills > 0) {
+    content.push(padText(`Kills: ${kills}`, WIDTH, 'left'));
+  }
+  content.push(padText(`Action Cost: ${input.actionCost || 'action'}`, WIDTH, 'left'));
+  content.push(padText('✓ Spell slot expended', WIDTH, 'left'));
+
+  return createBox('AOE SPELL', content, WIDTH, 'HEAVY');
+}
+
+/**
+ * Get ability modifier for a participant.
+ * Returns 0 if the ability isn't found (for ephemeral creatures without stats).
+ */
+function getAbilityModifier(
+  participant: Participant & { initiative: number },
+  ability: string
+): number {
+  // Try to get from stats if available
+  const stats = (participant as any).stats;
+  if (stats) {
+    const score = stats[ability.toLowerCase()];
+    if (typeof score === 'number') {
+      return Math.floor((score - 10) / 2);
+    }
+  }
+  // Default modifier based on initiativeBonus for DEX, or 0 for others
+  if (ability.toLowerCase() === 'dex') {
+    return participant.initiativeBonus || 0;
+  }
+  return 0;
+}
+
+/**
+ * Apply damage resistances, immunities, and vulnerabilities.
+ */
+function applyDamageModifiers(
+  participant: Participant,
+  damage: number,
+  damageType: string
+): number {
+  // Check immunity
+  if (participant.immunities?.includes(damageType as any)) {
+    return 0;
+  }
+  // Check resistance
+  if (participant.resistances?.includes(damageType as any)) {
+    return Math.floor(damage / 2);
+  }
+  // Check vulnerability
+  if (participant.vulnerabilities?.includes(damageType as any)) {
+    return damage * 2;
+  }
+  return damage;
+}
+
+/**
+ * Roll a dice expression like "8d6" or "2d10+5".
+ */
+function rollDiceExpression(expr: string): { total: number; breakdown: string } {
+  const rolls: number[] = [];
+  let total = 0;
+  let breakdown = '';
+
+  // Parse dice expression (e.g., "8d6", "2d10+5")
+  const match = expr.match(/^(\d+)d(\d+)(?:\+(\d+))?$/i);
+  if (!match) {
+    // Fallback: try to parse as a number
+    const num = parseInt(expr, 10);
+    if (!isNaN(num)) {
+      return { total: num, breakdown: `${num}` };
+    }
+    return { total: 0, breakdown: '0' };
+  }
+
+  const numDice = parseInt(match[1], 10);
+  const dieSize = parseInt(match[2], 10);
+  const bonus = match[3] ? parseInt(match[3], 10) : 0;
+
+  for (let i = 0; i < numDice; i++) {
+    const roll = Math.floor(Math.random() * dieSize) + 1;
+    rolls.push(roll);
+    total += roll;
+  }
+
+  total += bonus;
+  breakdown = `[${rolls.join('+')}]`;
+  if (bonus > 0) {
+    breakdown += `+${bonus}`;
+  }
+  breakdown += ` = ${total}`;
+
+  return { total, breakdown };
 }
 
 function formatActionNotImplemented(actorName: string, actionType: ActionType): string {
