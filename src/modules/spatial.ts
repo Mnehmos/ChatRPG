@@ -4,7 +4,7 @@
  */
 
 import { z } from 'zod';
-import { PositionSchema, SizeSchema, LightSchema, AoeShapeSchema } from '../types.js';
+import { PositionSchema, SizeSchema, LightSchema, AoeShapeSchema, Position } from '../types.js';
 import { fuzzyEnum } from '../fuzzy-enum.js';
 import { createBox, centerText, drawPath, BOX } from './ascii-art.js';
 import { getEncounterParticipant, getEncounterState } from './combat.js';
@@ -37,8 +37,8 @@ export interface MeasureDistanceResult {
  * When using character/creature IDs (strings), encounterId must be provided
  */
 export function measureDistance(input: MeasureDistanceInput): MeasureDistanceResult {
-  let fromPos: any = input.from;
-  let toPos: any = input.to;
+  let fromPos: Position = input.from as Position;
+  let toPos: Position = input.to as Position;
   let fromName: string | undefined;
   let toName: string | undefined;
 
@@ -70,7 +70,7 @@ export function measureDistance(input: MeasureDistanceInput): MeasureDistanceRes
   // Calculate deltas
   const dx = Math.abs(toPos.x - fromPos.x);
   const dy = Math.abs(toPos.y - fromPos.y);
-  const dz = input.includeElevation ? Math.abs(toPos.z - fromPos.z) : 0;
+  const dz = input.includeElevation ? Math.abs((toPos.z ?? 0) - (fromPos.z ?? 0)) : 0;
 
   let distanceSquares: number;
   let distanceFeet: number;
@@ -140,8 +140,8 @@ export function measureDistance(input: MeasureDistanceInput): MeasureDistanceRes
  * Format distance result as ASCII diagram
  */
 function formatDistanceResult(params: {
-  from: { x: number; y: number; z: number };
-  to: { x: number; y: number; z: number };
+  from: Position;
+  to: Position;
   fromName?: string;
   toName?: string;
   mode: string;
@@ -169,10 +169,10 @@ function formatDistanceResult(params: {
 
   // Positions
   content.push('FROM → TO');
-  let positionDisplay = `(${params.from.x}, ${params.from.y}, ${params.from.z}) → (${params.to.x}, ${params.to.y}, ${params.to.z})`;
+  let positionDisplay = `(${params.from.x}, ${params.from.y}, ${params.from.z ?? 0}) → (${params.to.x}, ${params.to.y}, ${params.to.z ?? 0})`;
   if (params.fromName || params.toName) {
-    const fromLabel = params.fromName || `(${params.from.x}, ${params.from.y}, ${params.from.z})`;
-    const toLabel = params.toName || `(${params.to.x}, ${params.to.y}, ${params.to.z})`;
+    const fromLabel = params.fromName || `(${params.from.x}, ${params.from.y}, ${params.from.z ?? 0})`;
+    const toLabel = params.toName || `(${params.to.x}, ${params.to.y}, ${params.to.z ?? 0})`;
     positionDisplay = `${fromLabel} → ${toLabel}`;
   }
   content.push(positionDisplay);
@@ -197,7 +197,7 @@ function formatDistanceResult(params: {
   content.push(`(${params.distanceSquares} squares @ 5ft each)`);
 
   // Notes
-  if (!params.includeElevation && params.to.z !== params.from.z) {
+  if (!params.includeElevation && (params.to.z ?? 0) !== (params.from.z ?? 0)) {
     content.push('');
     content.push('* Elevation difference ignored *');
   }
@@ -290,7 +290,7 @@ export function calculateAoe(input: CalculateAoeInput): string {
   } = input;
 
   // Calculate affected tiles based on shape
-  let tiles: Array<{ x: number; y: number; z: number }> = [];
+  let tiles: Position[] = [];
 
   switch (shape) {
     case 'sphere':
@@ -313,7 +313,7 @@ export function calculateAoe(input: CalculateAoeInput): string {
   // Build header
   content.push(centerText(`${shape.toUpperCase()} AoE`, AOE_DISPLAY_WIDTH));
   content.push('');
-  content.push(`Origin: (${origin.x}, ${origin.y}, ${origin.z})`);
+  content.push(`Origin: (${origin.x}, ${origin.y}, ${origin.z ?? 0})`);
   content.push('');
   content.push(BOX.LIGHT.H.repeat(AOE_DISPLAY_WIDTH));
   content.push('');
@@ -362,7 +362,7 @@ export function calculateAoe(input: CalculateAoeInput): string {
 
   // If includeOrigin, show the origin position
   if (includeOrigin) {
-    content.push(`Origin tile: (${origin.x}, ${origin.y}, ${origin.z})`);
+    content.push(`Origin tile: (${origin.x}, ${origin.y}, ${origin.z ?? 0})`);
   }
 
   // Show sample tiles (first few)
@@ -372,7 +372,7 @@ export function calculateAoe(input: CalculateAoeInput): string {
     content.push(`Sample tiles (first ${sampleSize}):`);
     for (let i = 0; i < sampleSize; i++) {
       const t = tiles[i];
-      content.push(`  (${t.x}, ${t.y}, ${t.z})`);
+      content.push(`  (${t.x}, ${t.y}, ${t.z ?? 0})`);
     }
     if (tiles.length > sampleSize) {
       content.push(`  ... and ${tiles.length - sampleSize} more`);
@@ -406,11 +406,11 @@ export function calculateAoe(input: CalculateAoeInput): string {
  * Uses 5ft grid squares.
  */
 function calculateSphereTiles(
-  origin: { x: number; y: number; z: number },
+  origin: Position,
   radius: number,
   includeOrigin: boolean
-): Array<{ x: number; y: number; z: number }> {
-  const tiles: Array<{ x: number; y: number; z: number }> = [];
+): Position[] {
+  const tiles: Position[] = [];
   const gridRadius = Math.ceil(radius / 5);
 
   for (let dx = -gridRadius; dx <= gridRadius; dx++) {
@@ -426,7 +426,7 @@ function calculateSphereTiles(
           tiles.push({
             x: origin.x + dx * 5,
             y: origin.y + dy * 5,
-            z: origin.z + dz * 5,
+            z: (origin.z ?? 0) + dz * 5,
           });
         }
       }
@@ -441,12 +441,12 @@ function calculateSphereTiles(
  * Per D&D 5e: cone width at any point = distance from origin
  */
 function calculateConeTiles(
-  origin: { x: number; y: number; z: number },
+  origin: Position,
   length: number,
   direction: { x: number; y: number },
   includeOrigin: boolean
-): Array<{ x: number; y: number; z: number }> {
-  const tiles: Array<{ x: number; y: number; z: number }> = [];
+): Position[] {
+  const tiles: Position[] = [];
 
   // Normalize direction
   const dirMag = Math.sqrt(direction.x * direction.x + direction.y * direction.y);
@@ -477,7 +477,7 @@ function calculateConeTiles(
       tiles.push({
         x: tileX,
         y: tileY,
-        z: origin.z,
+        z: origin.z ?? 0,
       });
     }
   }
@@ -489,12 +489,12 @@ function calculateConeTiles(
  * Calculate tiles within a line.
  */
 function calculateLineTiles(
-  origin: { x: number; y: number; z: number },
+  origin: Position,
   length: number,
   width: number,
   direction: { x: number; y: number }
-): Array<{ x: number; y: number; z: number }> {
-  const tiles: Array<{ x: number; y: number; z: number }> = [];
+): Position[] {
+  const tiles: Position[] = [];
 
   // Normalize direction
   const dirMag = Math.sqrt(direction.x * direction.x + direction.y * direction.y);
@@ -516,7 +516,7 @@ function calculateLineTiles(
       tiles.push({
         x: Math.round(centerX + perpX * w * 5),
         y: Math.round(centerY + perpY * w * 5),
-        z: origin.z,
+        z: origin.z ?? 0,
       });
     }
   }
@@ -529,19 +529,19 @@ function calculateLineTiles(
  * Origin can be a corner or edge based on direction.
  */
 function calculateCubeTiles(
-  origin: { x: number; y: number; z: number },
+  origin: Position,
   sideLength: number,
   direction: { x: number; y: number } | undefined,
   includeOrigin: boolean
-): Array<{ x: number; y: number; z: number }> {
-  const tiles: Array<{ x: number; y: number; z: number }> = [];
+): Position[] {
+  const tiles: Position[] = [];
   const gridSide = Math.ceil(sideLength / 5);
 
   // If direction given, cube extends in that direction from origin
   // Otherwise, origin is center of cube
   let startX = origin.x;
   let startY = origin.y;
-  let startZ = origin.z;
+  let startZ = origin.z ?? 0;
 
   if (!direction) {
     // Center origin
@@ -557,7 +557,7 @@ function calculateCubeTiles(
         const tileY = startY + dy * 5;
         const tileZ = startZ + dz * 5;
 
-        if (tileX === origin.x && tileY === origin.y && tileZ === origin.z && !includeOrigin) {
+        if (tileX === origin.x && tileY === origin.y && tileZ === (origin.z ?? 0) && !includeOrigin) {
           continue;
         }
 
@@ -574,12 +574,12 @@ function calculateCubeTiles(
  * Vertical column centered on origin.
  */
 function calculateCylinderTiles(
-  origin: { x: number; y: number; z: number },
+  origin: Position,
   radius: number,
   height: number,
   includeOrigin: boolean
-): Array<{ x: number; y: number; z: number }> {
-  const tiles: Array<{ x: number; y: number; z: number }> = [];
+): Position[] {
+  const tiles: Position[] = [];
   const gridRadius = Math.ceil(radius / 5);
   const gridHeight = Math.ceil(height / 5);
 
@@ -597,7 +597,7 @@ function calculateCylinderTiles(
         tiles.push({
           x: origin.x + dx * 5,
           y: origin.y + dy * 5,
-          z: origin.z + dz * 5,
+          z: (origin.z ?? 0) + dz * 5,
         });
       }
     }
@@ -709,6 +709,66 @@ const COVER_BONUSES = {
 } as const;
 
 /**
+ * Cover level type
+ */
+type CoverLevel = 'none' | 'half' | 'three_quarters' | 'total';
+
+/**
+ * Calculate cover from an obstacle based on its position relative to the line of sight.
+ *
+ * @param from - Starting position of the line of sight
+ * @param to - Ending position of the line of sight
+ * @param obstacle - Obstacle to check
+ * @returns Cover level provided by the obstacle
+ */
+function calculateCoverFromObstacle(
+  from: Position,
+  to: Position,
+  obstacle: { x: number; y: number; z: number; type: string; height?: number }
+): CoverLevel | null {
+  // Check if obstacle is on the line
+  if (!isOnLine(from, to, obstacle)) {
+    return null;
+  }
+
+  // Check height if specified
+  if (obstacle.height !== undefined) {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const dz = (to.z ?? 0) - (from.z ?? 0);
+
+    const t = getLineParameter(from, to, obstacle);
+    const lineZ = (from.z ?? 0) + t * dz;
+
+    // If line passes over the obstacle, it doesn't block
+    if (lineZ > obstacle.height / 5) {
+      return null;
+    }
+  }
+
+  // Determine cover level from obstacle type
+  return getObstacleCover(obstacle.type);
+}
+
+/**
+ * Determine the highest cover level from a list of possible cover levels.
+ * Uses D&D 5e cover rules:
+ * - Half cover: +2 AC and Dex saves (target is behind low wall, furniture, or other creatures)
+ * - Three-quarters cover: +5 AC and Dex saves (target is behind portcullis, arrow slit, or thick tree trunk)
+ * - Total cover: Cannot be targeted directly (target is completely concealed)
+ *
+ * @param coverLevel - Current cover level
+ * @param newCoverLevel - New cover level to compare
+ * @returns The higher of the two cover levels
+ */
+function determineCoverLevel(coverLevel: CoverLevel, newCoverLevel: CoverLevel): CoverLevel {
+  if (compareCover(newCoverLevel, coverLevel) > 0) {
+    return newCoverLevel;
+  }
+  return coverLevel;
+}
+
+/**
  * Display width for ASCII output
  */
 const LOS_DISPLAY_WIDTH = 50;
@@ -721,8 +781,8 @@ export function checkLineOfSight(input: CheckLineOfSightInput): string {
   const content: string[] = [];
 
   // Resolve positions
-  let fromPos: { x: number; y: number; z: number };
-  let toPos: { x: number; y: number; z: number };
+  let fromPos: Position;
+  let toPos: Position;
   let fromName: string | undefined;
   let toName: string | undefined;
 
@@ -755,7 +815,7 @@ export function checkLineOfSight(input: CheckLineOfSightInput): string {
   // Calculate distance
   const dx = toPos.x - fromPos.x;
   const dy = toPos.y - fromPos.y;
-  const dz = toPos.z - fromPos.z;
+  const dz = (toPos.z ?? 0) - (fromPos.z ?? 0);
   const distance = Math.sqrt(dx * dx + dy * dy + dz * dz) * 5;
 
   // Build header
@@ -764,15 +824,15 @@ export function checkLineOfSight(input: CheckLineOfSightInput): string {
 
   // Show positions
   if (fromName) {
-    content.push(`From: ${fromName} (${fromPos.x}, ${fromPos.y}, ${fromPos.z})`);
+    content.push(`From: ${fromName} (${fromPos.x}, ${fromPos.y}, ${fromPos.z ?? 0})`);
   } else {
-    content.push(`From: (${fromPos.x}, ${fromPos.y}, ${fromPos.z})`);
+    content.push(`From: (${fromPos.x}, ${fromPos.y}, ${fromPos.z ?? 0})`);
   }
 
   if (toName) {
-    content.push(`To: ${toName} (${toPos.x}, ${toPos.y}, ${toPos.z})`);
+    content.push(`To: ${toName} (${toPos.x}, ${toPos.y}, ${toPos.z ?? 0})`);
   } else {
-    content.push(`To: (${toPos.x}, ${toPos.y}, ${toPos.z})`);
+    content.push(`To: (${toPos.x}, ${toPos.y}, ${toPos.z ?? 0})`);
   }
 
   content.push(`Distance: ${Math.round(distance)} feet`);
@@ -795,29 +855,16 @@ export function checkLineOfSight(input: CheckLineOfSightInput): string {
   // (For now, just use provided obstacles - encounter terrain integration pending)
 
   // Check for blocking and cover
-  let coverLevel: 'none' | 'half' | 'three_quarters' | 'total' = 'none';
+  let coverLevel: CoverLevel = 'none';
   let blockingObstacle: typeof allObstacles[0] | undefined;
   let blockingCreature: { size: string } | undefined;
 
   // Check static obstacles
   for (const obstacle of allObstacles) {
-    if (isOnLine(fromPos, toPos, obstacle)) {
-      // Check height if specified
-      if (obstacle.height !== undefined) {
-        // Calculate z-height at obstacle position
-        const t = getLineParameter(fromPos, toPos, obstacle);
-        const lineZ = fromPos.z + t * dz;
-
-        // If line passes over the obstacle, it doesn't block
-        if (lineZ > obstacle.height / 5) {
-          continue;
-        }
-      }
-
-      // Determine cover level from obstacle type
-      const obstacleCover = getObstacleCover(obstacle.type);
-      if (compareCover(obstacleCover, coverLevel) > 0) {
-        coverLevel = obstacleCover;
+    const obstacleCover = calculateCoverFromObstacle(fromPos, toPos, obstacle);
+    if (obstacleCover !== null) {
+      coverLevel = determineCoverLevel(coverLevel, obstacleCover);
+      if (obstacleCover !== 'none') {
         blockingObstacle = obstacle;
       }
     }
@@ -828,8 +875,8 @@ export function checkLineOfSight(input: CheckLineOfSightInput): string {
     for (const creature of input.creatures) {
       if (isOnLine(fromPos, toPos, creature)) {
         const creatureCover = getCreatureCover(creature.size);
-        if (compareCover(creatureCover, coverLevel) > 0) {
-          coverLevel = creatureCover;
+        coverLevel = determineCoverLevel(coverLevel, creatureCover);
+        if (creatureCover !== 'none') {
           blockingCreature = creature;
         }
       }
@@ -852,8 +899,8 @@ export function checkLineOfSight(input: CheckLineOfSightInput): string {
   if (input.senses?.includes('tremorsense') && input.tremorsenseRange) {
     content.push('TREMORSENSE NOTES');
     content.push('');
-    if (toPos.z > 0) {
-      content.push(`Target is airborne (z=${toPos.z}) - flying creatures`);
+    if ((toPos.z ?? 0) > 0) {
+      content.push(`Target is airborne (z=${toPos.z ?? 0}) - flying creatures`);
       content.push('cannot be detected by tremorsense.');
     } else if (distance <= input.tremorsenseRange) {
       content.push(`Range: ${input.tremorsenseRange} ft (target within range)`);
@@ -933,14 +980,14 @@ export function checkLineOfSight(input: CheckLineOfSightInput): string {
  * Uses a tolerance for grid-based checking.
  */
 function isOnLine(
-  from: { x: number; y: number; z: number },
-  to: { x: number; y: number; z: number },
-  point: { x: number; y: number; z: number }
+  from: Position,
+  to: Position,
+  point: Position
 ): boolean {
   // Calculate distance from point to line
   const dx = to.x - from.x;
   const dy = to.y - from.y;
-  const dz = to.z - from.z;
+  const dz = (to.z ?? 0) - (from.z ?? 0);
 
   const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
   if (length === 0) return false;
@@ -948,7 +995,7 @@ function isOnLine(
   // Vector from 'from' to 'point'
   const px = point.x - from.x;
   const py = point.y - from.y;
-  const pz = point.z - from.z;
+  const pz = (point.z ?? 0) - (from.z ?? 0);
 
   // Project point onto line
   const t = (px * dx + py * dy + pz * dz) / (length * length);
@@ -959,12 +1006,12 @@ function isOnLine(
   // Calculate closest point on line
   const closestX = from.x + t * dx;
   const closestY = from.y + t * dy;
-  const closestZ = from.z + t * dz;
+  const closestZ = (from.z ?? 0) + t * dz;
 
   // Calculate distance from point to closest point on line
   const distX = point.x - closestX;
   const distY = point.y - closestY;
-  const distZ = point.z - closestZ;
+  const distZ = (point.z ?? 0) - closestZ;
   const dist = Math.sqrt(distX * distX + distY * distY + distZ * distZ);
 
   // Within 1 grid square (5 feet / 5 = 1 unit) tolerance
@@ -976,19 +1023,19 @@ function isOnLine(
  * Returns value between 0 (at 'from') and 1 (at 'to').
  */
 function getLineParameter(
-  from: { x: number; y: number; z: number },
-  to: { x: number; y: number; z: number },
-  point: { x: number; y: number; z: number }
+  from: Position,
+  to: Position,
+  point: Position
 ): number {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
-  const dz = to.z - from.z;
+  const dz = (to.z ?? 0) - (from.z ?? 0);
   const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
   if (length === 0) return 0;
 
   const px = point.x - from.x;
   const py = point.y - from.y;
-  const pz = point.z - from.z;
+  const pz = (point.z ?? 0) - (from.z ?? 0);
 
   return (px * dx + py * dy + pz * dz) / (length * length);
 }
@@ -996,7 +1043,7 @@ function getLineParameter(
 /**
  * Convert obstacle type to cover level.
  */
-function getObstacleCover(type: string): 'none' | 'half' | 'three_quarters' | 'total' {
+function getObstacleCover(type: string): CoverLevel {
   switch (type) {
     case 'half_cover':
       return 'half';
@@ -1016,7 +1063,7 @@ function getObstacleCover(type: string): 'none' | 'half' | 'three_quarters' | 't
  * Small/Medium creatures provide half cover, Large/Huge provide 3/4 cover.
  * Gargantuan provides total cover, tiny creatures don't provide cover.
  */
-function getCreatureCover(size: string): 'none' | 'half' | 'three_quarters' | 'total' {
+function getCreatureCover(size: string): CoverLevel {
   switch (size) {
     case 'tiny':
       return 'none';
@@ -1083,13 +1130,13 @@ const COVER_DISPLAY_WIDTH = 50;
 export function checkCover(input: CheckCoverInput): string {
   const content: string[] = [];
 
-  const attackerPos = {
+  const attackerPos: Position = {
     x: input.attacker.x,
     y: input.attacker.y,
     z: input.attacker.z ?? 0,
   };
 
-  const targetPos = {
+  const targetPos: Position = {
     x: input.target.x,
     y: input.target.y,
     z: input.target.z ?? 0,
@@ -1098,21 +1145,21 @@ export function checkCover(input: CheckCoverInput): string {
   // Calculate distance
   const dx = targetPos.x - attackerPos.x;
   const dy = targetPos.y - attackerPos.y;
-  const dz = targetPos.z - attackerPos.z;
+  const dz = (targetPos.z ?? 0) - (attackerPos.z ?? 0);
   const distance = Math.sqrt(dx * dx + dy * dy + dz * dz) * 5; // Convert to feet
 
   // Build header
   content.push(centerText('COVER CHECK', COVER_DISPLAY_WIDTH));
   content.push('');
-  content.push(`Attacker: (${attackerPos.x}, ${attackerPos.y}, ${attackerPos.z})`);
-  content.push(`Target: (${targetPos.x}, ${targetPos.y}, ${targetPos.z})`);
+  content.push(`Attacker: (${attackerPos.x}, ${attackerPos.y}, ${attackerPos.z ?? 0})`);
+  content.push(`Target: (${targetPos.x}, ${targetPos.y}, ${targetPos.z ?? 0})`);
   content.push(`Distance: ${Math.round(distance)} feet`);
   content.push('');
   content.push(BOX.LIGHT.H.repeat(COVER_DISPLAY_WIDTH));
   content.push('');
 
   // Find highest cover level from all obstacles
-  let coverLevel: 'none' | 'half' | 'three_quarters' | 'total' = 'none';
+  let coverLevel: CoverLevel = 'none';
   const coverSources: Array<{ type: string; position: string }> = [];
 
   // Check static obstacles
@@ -1122,31 +1169,18 @@ export function checkCover(input: CheckCoverInput): string {
     if (
       obstacle.x === attackerPos.x &&
       obstacle.y === attackerPos.y &&
-      obstacle.z === attackerPos.z
+      (obstacle.z ?? 0) === (attackerPos.z ?? 0)
     ) {
       continue;
     }
 
-    if (isOnLine(attackerPos, targetPos, obstacle)) {
-      // Check height if specified
-      if (obstacle.height !== undefined) {
-        const t = getLineParameter(attackerPos, targetPos, obstacle);
-        const lineZ = attackerPos.z + t * dz;
-
-        // If line passes over the obstacle, it doesn't block
-        if (lineZ > obstacle.height / 5) {
-          continue;
-        }
-      }
-
-      const obstacleCover = getObstacleCover(obstacle.type);
-      if (compareCover(obstacleCover, coverLevel) > 0) {
-        coverLevel = obstacleCover;
-      }
+    const obstacleCover = calculateCoverFromObstacle(attackerPos, targetPos, obstacle);
+    if (obstacleCover !== null) {
+      coverLevel = determineCoverLevel(coverLevel, obstacleCover);
       if (obstacleCover !== 'none') {
         coverSources.push({
           type: obstacle.type,
-          position: `(${obstacle.x}, ${obstacle.y}, ${obstacle.z})`,
+          position: `(${obstacle.x}, ${obstacle.y}, ${obstacle.z ?? 0})`,
         });
       }
     }
@@ -1157,13 +1191,11 @@ export function checkCover(input: CheckCoverInput): string {
     for (const creature of input.creatures) {
       if (isOnLine(attackerPos, targetPos, creature)) {
         const creatureCover = getCreatureCover(creature.size);
-        if (compareCover(creatureCover, coverLevel) > 0) {
-          coverLevel = creatureCover;
-        }
+        coverLevel = determineCoverLevel(coverLevel, creatureCover);
         if (creatureCover !== 'none') {
           coverSources.push({
             type: `${creature.size} creature`,
-            position: `(${creature.x}, ${creature.y}, ${creature.z})`,
+            position: `(${creature.x}, ${creature.y}, ${creature.z ?? 0})`,
           });
         }
       }
@@ -1322,7 +1354,7 @@ interface Prop {
   id: string;
   name: string;
   type: string;
-  position: { x: number; y: number; z: number };
+  position: Position;
   state?: string;
   locked?: boolean;
   lockDC?: number;
@@ -1441,7 +1473,7 @@ export function placeProp(input: PlacePropInput): string {
       content.push('');
       content.push(`Name: ${prop.name}`);
       content.push(`Type: ${prop.type}`);
-      content.push(`Position: (${prop.position.x}, ${prop.position.y}, ${prop.position.z})`);
+      content.push(`Position: (${prop.position.x}, ${prop.position.y}, ${prop.position.z ?? 0})`);
       content.push(`ID: ${prop.id}`);
       content.push('');
       content.push(BOX.LIGHT.H.repeat(PROP_DISPLAY_WIDTH));
@@ -1491,7 +1523,7 @@ export function placeProp(input: PlacePropInput): string {
         for (const prop of props) {
           content.push(`${prop.name} (${prop.type})`);
           content.push(`  ID: ${prop.id}`);
-          content.push(`  Position: (${prop.position.x}, ${prop.position.y}, ${prop.position.z})`);
+          content.push(`  Position: (${prop.position.x}, ${prop.position.y}, ${prop.position.z ?? 0})`);
           if (prop.state) content.push(`  State: ${prop.state}`);
           content.push('');
         }
@@ -1546,7 +1578,7 @@ export function placeProp(input: PlacePropInput): string {
       if (prop.state) content.push(`State: ${prop.state}`);
       if (prop.locked) content.push('Locked: Yes');
       if (prop.hidden) content.push('Hidden: Yes');
-      content.push(`Position: (${prop.position.x}, ${prop.position.y}, ${prop.position.z})`);
+      content.push(`Position: (${prop.position.x}, ${prop.position.y}, ${prop.position.z ?? 0})`);
 
       return createBox('PROP UPDATED', content);
     }
@@ -1574,8 +1606,8 @@ export function placeProp(input: PlacePropInput): string {
       content.push(`Name: ${prop.name}`);
       content.push(`ID: ${prop.id}`);
       content.push('');
-      content.push(`From: (${oldPos.x}, ${oldPos.y}, ${oldPos.z})`);
-      content.push(`To: (${prop.position.x}, ${prop.position.y}, ${prop.position.z})`);
+      content.push(`From: (${oldPos.x}, ${oldPos.y}, ${oldPos.z ?? 0})`);
+      content.push(`To: (${prop.position.x}, ${prop.position.y}, ${prop.position.z ?? 0})`);
 
       return createBox('PROP MOVED', content);
     }
@@ -1588,6 +1620,26 @@ export function placeProp(input: PlacePropInput): string {
 // ============================================================
 // CALCULATE MOVEMENT
 // ============================================================
+
+/**
+ * Terrain movement cost constants based on D&D 5e rules.
+ *
+ * D&D 5e Movement Rules:
+ * - Normal terrain: 1x movement cost (5 feet per square)
+ * - Difficult terrain: 2x movement cost (10 feet per square)
+ *   Examples: rubble, undergrowth, steep stairs, snow, shallow bogs
+ * - Water (swimming): 2x movement cost unless creature has swim speed
+ * - Obstacles: Impassable (infinite cost)
+ *   Examples: walls, solid objects, cliffs without climbing
+ *
+ * Reference: Player's Handbook, Chapter 9: Combat, "Difficult Terrain"
+ */
+const TERRAIN_COSTS: Record<string, number> = {
+  normal: 1,
+  difficultTerrain: 2,
+  water: 2,
+  obstacle: Infinity,
+} as const;
 
 /**
  * Movement calculation modes
@@ -1631,16 +1683,6 @@ export type CalculateMovementInput = z.infer<typeof calculateMovementSchema>;
  * Display width for movement ASCII output
  */
 const MOVEMENT_DISPLAY_WIDTH = 50;
-
-/**
- * Terrain cost multipliers
- */
-const TERRAIN_COSTS: Record<string, number> = {
-  normal: 1,
-  difficultTerrain: 2,
-  water: 2,
-  obstacle: Infinity,
-};
 
 interface GridCell {
   x: number;
