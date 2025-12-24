@@ -82,6 +82,42 @@ export interface TypedToolDefinition<TArgs = unknown> {
  */
 export interface ToolDefinition extends TypedToolDefinition<unknown> {}
 
+/**
+ * Creates a type-safe handler function with proper schema validation.
+ * Provides compile-time type checking for handler arguments based on Zod schema.
+ *
+ * @template T - The validated argument type inferred from the Zod schema
+ * @param schema - Zod schema for runtime validation
+ * @param handler - Type-safe handler function that receives validated args
+ * @returns A ToolHandler that validates input before calling the typed handler
+ *
+ * @example
+ * ```typescript
+ * const mySchema = z.object({ name: z.string(), age: z.number() });
+ * const myHandler = createTypedHandler(mySchema, async (args) => {
+ *   // args is typed as { name: string; age: number }
+ *   return success(`${args.name} is ${args.age} years old`);
+ * });
+ * ```
+ */
+export function createTypedHandler<T>(
+  schema: z.ZodSchema<T>,
+  handler: ToolHandler<T>
+): ToolHandler<unknown> {
+  return async (args: unknown): Promise<CallToolResult> => {
+    try {
+      const validated = schema.parse(args);
+      return await handler(validated);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        const issues = err.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+        return error(`Validation failed: ${issues}`);
+      }
+      throw err;
+    }
+  };
+}
+
 // ============================================================
 // RESPONSE HELPERS
 // ============================================================

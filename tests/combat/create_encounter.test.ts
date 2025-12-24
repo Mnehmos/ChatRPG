@@ -784,4 +784,195 @@ describe('create_encounter', () => {
       expect(result.isError).toBe(true);
     });
   });
+
+  /**
+   * CRITICAL-001: Encounter Creation Stability Tests
+   * Bug: System crashes with "Cannot read properties of undefined (reading 'padEnd')"
+   * These tests exercise edge cases and stress scenarios to expose the crash.
+   *
+   * Bug Reference: bug_1766533876607_qp4luhy8v
+   * Severity: CRITICAL
+   */
+  describe('encounter creation stability (CRITICAL-001)', () => {
+    it('should create 20 encounters without crash', async () => {
+      // Stress test: Repeated encounter creation should not cause memory issues
+      // or trigger the padEnd undefined crash
+      for (let i = 0; i < 20; i++) {
+        const result = await handleToolCall('create_encounter', {
+          participants: [
+            { id: `fighter-${i}`, name: `Fighter ${i}`, hp: 30, maxHp: 30, position: { x: 0, y: 0 } },
+            { id: `goblin-${i}`, name: `Goblin ${i}`, hp: 7, maxHp: 7, position: { x: 5, y: 0 }, isEnemy: true },
+          ],
+        });
+
+        // Should not crash - verify we got a valid result
+        expect(result.isError).toBeUndefined();
+        const text = getTextContent(result);
+        expect(text).toContain(`Fighter ${i}`);
+        
+        // Extract encounter ID and clean up to avoid memory issues
+        const idMatch = text.match(/Encounter ID: ([a-zA-Z0-9-]+)/);
+        expect(idMatch).not.toBeNull();
+        
+        if (idMatch) {
+          await handleToolCall('end_encounter', {
+            encounterId: idMatch[1],
+            outcome: 'victory',
+          });
+        }
+      }
+    });
+
+    it('should handle participant with empty name gracefully', async () => {
+      // Edge case: Empty string name could cause padEnd issues during ASCII formatting
+      // The padEnd call expects a valid string, but empty string may cause issues
+      const result = await handleToolCall('create_encounter', {
+        participants: [
+          { id: 'test-empty-name', name: '', hp: 10, maxHp: 10, position: { x: 0, y: 0 } },
+        ],
+      });
+
+      // Should either reject with validation error or provide default name, NOT crash
+      // The key assertion is that no exception is thrown (test completes)
+      const text = getTextContent(result);
+      
+      // Either we get an error message OR a valid encounter - both are acceptable
+      // What's NOT acceptable is a crash with "Cannot read properties of undefined"
+      expect(result.isError ?? text.length > 0).toBeTruthy();
+    });
+
+    it('should handle participant with undefined optional fields', async () => {
+      // Minimal participant: only required fields
+      // Missing optional fields like resistances, immunities, vulnerabilities
+      // should not cause null/undefined errors in formatting
+      const result = await handleToolCall('create_encounter', {
+        participants: [
+          {
+            id: 'minimal-participant',
+            name: 'Minimal',
+            hp: 10,
+            maxHp: 10,
+            position: { x: 0, y: 0 },
+            // Explicitly NOT providing optional fields:
+            // - ac (should default to 10)
+            // - initiativeBonus (should default to 0)
+            // - size (should default to medium)
+            // - speed (should default to 30)
+            // - resistances, immunities, vulnerabilities, conditionImmunities (should be empty arrays)
+          },
+        ],
+      });
+
+      expect(result.isError).toBeUndefined();
+      const text = getTextContent(result);
+      expect(text).toContain('Minimal');
+      // Should have defaults applied, not crash
+      expect(text).toContain('AC');
+    });
+
+    it('should handle participant with null-ish name variants', async () => {
+      // Test various name lengths that could stress padEnd formatting
+      // Short names, normal names, and very long names
+      const names = ['a', 'ab', 'Normal Name', 'Very Long Name That Might Cause Issues With Column Formatting'];
+
+      for (const name of names) {
+        const result = await handleToolCall('create_encounter', {
+          participants: [
+            { id: `test-${name.slice(0, 10)}`, name: name, hp: 10, maxHp: 10, position: { x: 0, y: 0 } },
+          ],
+        });
+
+        // Should not crash with any name length
+        expect(result.isError).toBeUndefined();
+        const text = getTextContent(result);
+        
+        // Name should be present (possibly truncated for very long ones)
+        expect(text.length).toBeGreaterThan(0);
+        
+        // Clean up
+        const idMatch = text.match(/Encounter ID: ([a-zA-Z0-9-]+)/);
+        if (idMatch) {
+          await handleToolCall('end_encounter', {
+            encounterId: idMatch[1],
+            outcome: 'fled',
+          });
+        }
+      }
+    });
+
+    it('should handle encounter with many participants without crash', async () => {
+      // Stress test: 10 participants with various field combinations
+      // This tests the ASCII table formatting with many rows
+      const participants = Array.from({ length: 10 }, (_, i) => ({
+        id: `char-${i}`,
+        name: `Character ${i}`,
+        hp: 10 + i,
+        maxHp: 20 + i,
+        ac: 10 + Math.floor(i / 2),
+        position: { x: i * 5, y: (i % 2) * 5 },
+        initiativeBonus: i - 5, // Range from -5 to +4
+        isEnemy: i >= 5,
+        // Some participants have optional arrays, some don't
+        ...(i % 3 === 0 ? { resistances: ['fire'] } : {}),
+        ...(i % 4 === 0 ? { immunities: ['poison'] } : {}),
+      }));
+
+      const result = await handleToolCall('create_encounter', { participants });
+
+      expect(result.isError).toBeUndefined();
+      const text = getTextContent(result);
+      
+      // All 10 participants should be present
+      expect(text).toContain('Character 0');
+      expect(text).toContain('Character 9');
+      
+      // Verify we got valid ASCII output structure
+      expect(text).toContain('╔'); // Box drawing
+      expect(text).toContain('INITIATIVE');
+    });
+
+    it('should handle rapid create/end cycle without state corruption', async () => {
+      // Rapid succession test: Create and immediately end encounters
+      // This tests for race conditions or state leaks that could cause padEnd crash
+      const encounterIds: string[] = [];
+      
+      // Create 5 encounters rapidly
+      for (let i = 0; i < 5; i++) {
+        const result = await handleToolCall('create_encounter', {
+          participants: [
+            { id: `rapid-p-${i}`, name: `Rapid Player ${i}`, hp: 20, maxHp: 20, position: { x: 0, y: 0 } },
+            { id: `rapid-e-${i}`, name: `Rapid Enemy ${i}`, hp: 10, maxHp: 10, position: { x: 10, y: 0 }, isEnemy: true },
+          ],
+        });
+        
+        expect(result.isError).toBeUndefined();
+        const text = getTextContent(result);
+        const idMatch = text.match(/Encounter ID: ([a-zA-Z0-9-]+)/);
+        expect(idMatch).not.toBeNull();
+        if (idMatch) {
+          encounterIds.push(idMatch[1]);
+        }
+      }
+      
+      // End all encounters
+      for (const encounterId of encounterIds) {
+        const endResult = await handleToolCall('end_encounter', {
+          encounterId,
+          outcome: 'victory',
+        });
+        expect(endResult.isError).toBeUndefined();
+      }
+      
+      // Create one more encounter to verify state is clean
+      const finalResult = await handleToolCall('create_encounter', {
+        participants: [
+          { id: 'final-test', name: 'Final Test', hp: 30, maxHp: 30, position: { x: 0, y: 0 } },
+        ],
+      });
+      
+      expect(finalResult.isError).toBeUndefined();
+      const finalText = getTextContent(finalResult);
+      expect(finalText).toContain('Final Test');
+    });
+  });
 });

@@ -74,6 +74,7 @@ export type Skill = z.infer<typeof SkillSchema>;
 export const ActionTypeSchema = fuzzyEnum([
   'attack',
   'cast_spell',
+  'cast', // Alias for cast_spell
   'dash',
   'disengage',
   'dodge',
@@ -86,6 +87,8 @@ export const ActionTypeSchema = fuzzyEnum([
   'use_special_ability',
   'shove',
   'grapple',
+  'improvise',         // NEW - for custom actions
+  'two_weapon_attack', // NEW - off-hand attack
 ] as const, 'actionType');
 export type ActionType = z.infer<typeof ActionTypeSchema>;
 
@@ -149,6 +152,108 @@ export const RollModeSchema = fuzzyEnum([
   'disadvantage',
 ] as const, 'rollMode');
 export type RollMode = z.infer<typeof RollModeSchema>;
+
+// ============================================================
+// ADDITIONAL FUZZY ENUM SCHEMAS (Consolidated from Modules)
+// ============================================================
+
+// Verbosity Schema (replaces inline definitions)
+export const VerbositySchema = fuzzyEnum([
+  'minimal',
+  'summary',
+  'standard',
+  'detailed',
+] as const, 'verbosity');
+export type Verbosity = z.infer<typeof VerbositySchema>;
+
+// Spatial Module Schemas
+export const ObstacleTypeSchema = fuzzyEnum([
+  'wall',
+  'pillar',
+  'half_cover',
+  'three_quarters_cover',
+  'total_cover',
+] as const, 'obstacleType');
+export type ObstacleType = z.infer<typeof ObstacleTypeSchema>;
+
+export const SenseSchema = fuzzyEnum([
+  'blindsight',
+  'darkvision',
+  'tremorsense',
+  'truesight',
+] as const, 'sense');
+export type Sense = z.infer<typeof SenseSchema>;
+
+export const PropTypeSchema = fuzzyEnum([
+  'barrel', 'crate', 'chest', 'door', 'lever', 'pillar', 'statue',
+  'table', 'chair', 'altar', 'trap', 'obstacle', 'custom',
+] as const, 'propType');
+export type PropType = z.infer<typeof PropTypeSchema>;
+
+export const MovementModeSchema = fuzzyEnum([
+  'path',
+  'reach',
+  'adjacent',
+] as const, 'movementMode');
+export type MovementMode = z.infer<typeof MovementModeSchema>;
+
+export const DistanceModeSchema = fuzzyEnum([
+  'euclidean',
+  'grid_5e',
+  'grid_alt',
+] as const, 'distanceMode');
+export type DistanceMode = z.infer<typeof DistanceModeSchema>;
+
+// Data Module Schemas
+export const LocationOperationSchema = fuzzyEnum([
+  'create', 'get', 'update', 'delete', 'link', 'unlink', 'list',
+] as const, 'locationOperation');
+export type LocationOperation = z.infer<typeof LocationOperationSchema>;
+
+export const ItemTypeSchema = fuzzyEnum([
+  'weapon', 'armor', 'shield', 'consumable', 'ammunition',
+  'equipment', 'currency', 'misc',
+] as const, 'itemType');
+export type ItemType = z.infer<typeof ItemTypeSchema>;
+
+export const EquipmentSlotSchema = fuzzyEnum([
+  'mainHand', 'offHand', 'armor', 'head', 'hands',
+  'feet', 'neck', 'ring1', 'ring2',
+] as const, 'equipmentSlot');
+export type EquipmentSlot = z.infer<typeof EquipmentSlotSchema>;
+
+export const ImportanceSchema = fuzzyEnum([
+  'low', 'medium', 'high', 'critical',
+] as const, 'importance');
+export type Importance = z.infer<typeof ImportanceSchema>;
+
+// Character Module Schemas
+export const SpellcastingSchema = fuzzyEnum([
+  'full', 'half', 'third', 'warlock', 'none',
+] as const, 'spellcasting');
+export type Spellcasting = z.infer<typeof SpellcastingSchema>;
+
+export const CheckTypeSchema = fuzzyEnum([
+  'skill', 'ability', 'save', 'attack', 'initiative',
+] as const, 'checkType');
+export type CheckType = z.infer<typeof CheckTypeSchema>;
+
+// Combat Module Schemas
+export const ShoveDirectionSchema = fuzzyEnum([
+  'away', 'prone',
+] as const, 'shoveDirection');
+export type ShoveDirection = z.infer<typeof ShoveDirectionSchema>;
+
+export const CombatOutcomeSchema = fuzzyEnum([
+  'victory', 'defeat', 'fled', 'negotiated', 'other',
+] as const, 'combatOutcome');
+export type CombatOutcome = z.infer<typeof CombatOutcomeSchema>;
+
+// Magic Module Schemas
+export const EffectTypeSchema = fuzzyEnum([
+  'damage', 'healing', 'control', 'utility', 'summon',
+] as const, 'effectType');
+export type EffectType = z.infer<typeof EffectTypeSchema>;
 
 // ============================================================
 // ABILITY SCORES
@@ -226,4 +331,226 @@ export interface Connection {
   hidden?: boolean;
   oneWay?: boolean;
   travelTime?: number;
+}
+
+// ============================================================
+// MAGIC SYSTEM TYPES
+// ============================================================
+
+/**
+ * Tracks concentration on a spell for a character.
+ * Concentration can be broken by taking damage, being incapacitated, or casting another concentration spell.
+ */
+export interface ConcentrationState {
+  characterId: string;
+  spellName: string;
+  targets: string[];
+  duration?: number;
+  startedRound?: number;
+}
+
+/**
+ * Tracks an active magical aura effect.
+ * Auras typically affect all creatures within a certain radius.
+ */
+export interface AuraState {
+  sourceId: string;
+  auraName: string;
+  radius: number;
+  effect: string;
+  duration?: number;
+  startedRound?: number;
+}
+
+// ============================================================
+// CHARACTER TYPES
+// ============================================================
+
+/**
+ * Core character data structure for D&D 5e characters.
+ * Includes ability scores, HP, spell slots, proficiencies, and more.
+ */
+export interface Character {
+  id: string;
+  name: string;
+  race: string;
+  class: string;
+  level: number;
+  abilityScores: AbilityScores;
+  maxHp: number;
+  currentHp: number;
+  tempHp?: number;
+  armorClass: number;
+  proficiencyBonus: number;
+  speed: number;
+  hitDice: {
+    total: number;
+    current: number;
+    sides: number;
+  };
+  spellSlots?: {
+    [level: number]: {
+      max: number;
+      current: number;
+    };
+  };
+  conditions: ActiveCondition[];
+  equipment: string[];
+  features: string[];
+  spells: string[];
+  inventory: string[];
+  gold?: number;
+  experience?: number;
+  background?: string;
+  alignment?: string;
+  inspiration?: boolean;
+  deathSaves?: {
+    successes: number;
+    failures: number;
+  };
+  skills?: Partial<Record<Skill, boolean>>;
+  savingThrows?: Partial<Record<Ability, boolean>>;
+}
+
+/**
+ * Represents a condition effect applied to a character or creature.
+ * Includes the condition type and any associated metadata.
+ */
+export interface ConditionEffect {
+  condition: Condition;
+  duration?: number;
+  source?: string;
+  saveType?: Ability;
+  saveDC?: number;
+}
+
+/**
+ * An active condition on a character with tracking information.
+ */
+export interface ActiveCondition {
+  name: Condition;
+  duration?: number;
+  source?: string;
+  startedRound?: number;
+}
+
+/**
+ * Represents a prop or object in the game world.
+ * Can be interacted with, moved, or used in combat.
+ */
+export interface Prop {
+  id: string;
+  name: string;
+  description?: string;
+  position?: Position;
+  size?: Size;
+  blocking?: boolean;
+  cover?: Cover;
+  hp?: number;
+  ac?: number;
+  properties?: Record<string, unknown>;
+}
+
+// ============================================================
+// LOCATION GRAPH TYPES
+// ============================================================
+
+export const LocationTypeSchema = fuzzyEnum([
+  'room',
+  'hallway',
+  'indoor',
+  'outdoor',
+  'cave',
+  'building',
+  'dungeon',
+  'town',
+  'wilderness',
+] as const, 'locationType');
+export type LocationType = z.infer<typeof LocationTypeSchema>;
+
+export const TerrainTypeSchema = fuzzyEnum([
+  'normal',
+  'difficult',
+  'water',
+  'lava',
+  'ice',
+  'mud',
+  'sand',
+] as const, 'terrainType');
+export type TerrainType = z.infer<typeof TerrainTypeSchema>;
+
+/**
+ * A node in the location graph representing a discrete location.
+ */
+export interface LocationNode {
+  id: string;
+  name: string;
+  description?: string;
+  locationType: LocationType;
+  lighting: Light;
+  terrain?: TerrainType;
+  size?: Size;
+  hazards: string[];
+  tags: string[];
+  discovered: boolean;
+  properties: Record<string, unknown>;
+}
+
+/**
+ * An edge in the location graph representing a connection between locations.
+ */
+export interface LocationEdge {
+  fromId: string;
+  toId: string;
+  connectionType: ConnectionType;
+  locked: boolean;
+  lockDC?: number;
+  hidden: boolean;
+  findDC?: number;
+  oneWay: boolean;
+  description?: string;
+}
+
+/**
+ * The complete location graph with nodes, edges, and current location.
+ */
+export interface LocationGraph {
+  nodes: Map<string, LocationNode>;
+  edges: LocationEdge[];
+  currentLocationId: string | null;
+}
+
+// ============================================================
+// PARTY TYPES
+// ============================================================
+
+export const PartyRoleSchema = fuzzyEnum([
+  'leader',
+  'scout',
+  'healer',
+  'tank',
+  'support',
+  'damage',
+  'utility',
+  'other',
+] as const, 'partyRole');
+export type PartyRole = z.infer<typeof PartyRoleSchema>;
+
+/**
+ * Represents a member of the adventuring party.
+ */
+export interface PartyMember {
+  characterId: string;
+  characterName: string;
+  role?: PartyRole;
+  joinedAt: string;
+}
+
+/**
+ * The current state of the adventuring party.
+ */
+export interface PartyState {
+  members: PartyMember[];
+  currentLocationId?: string;
+  history: string[];
 }

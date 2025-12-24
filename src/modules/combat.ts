@@ -8,11 +8,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { randomUUID } from 'crypto';
-import { ConditionSchema, AbilitySchema, PositionSchema, SizeSchema, DamageTypeSchema, LightSchema, RollModeSchema, AoeShapeSchema, type Condition, type Ability } from '../types.js';
+import { ConditionSchema, AbilitySchema, PositionSchema, SizeSchema, DamageTypeSchema, LightSchema, RollModeSchema, AoeShapeSchema, ActionTypeSchema, ActionCostSchema, WeaponTypeSchema, CoverSchema, VerbositySchema, ShoveDirectionSchema, CombatOutcomeSchema, type Condition, type Ability, type Position, type Light, type DamageType, type ActionType, type ActionCost, type WeaponType, type Cover, type Verbosity, type ShoveDirection, type CombatOutcome } from '../types.js';
 import { fuzzyEnum } from '../fuzzy-enum.js';
 import { createBox, centerText, padText, BOX, createStatusBar } from './ascii-art.js';
 import { broadcastToEncounter } from '../websocket.js';
 import { getSpellSlotDataForCharacter } from './characters.js';
+import { getCoverBonus } from './spatial.js';
 
 // Use AppData for persistent character storage (cross-session persistence)
 const getDataDir = () => {
@@ -35,8 +36,11 @@ const DATA_ROOT = getDataDir();
  * Called whenever HP changes during combat (damage, healing, etc.)
  * Only syncs for persistent participants (those with characterId).
  */
+/**
+ * Sync HP from encounter participant TO persistent character (encounter → disk)
+ */
 function syncHpToCharacter(participant: { id: string; hp: number; characterId?: string }): void {
-  const charId = (participant as any).characterId;
+  const charId = participant.characterId;
   if (!charId) return; // Ephemeral participant, no persistence needed
 
   const charPath = path.join(DATA_ROOT, 'characters', `${charId}.json`);
@@ -52,6 +56,85 @@ function syncHpToCharacter(participant: { id: string; hp: number; characterId?: 
     // Silently fail - don't interrupt combat for persistence errors
     console.warn(`Failed to sync HP for character ${charId}:`, err);
   }
+}
+
+/**
+ * Sync state from persistent character TO encounter participant (disk → encounter)
+ * This ensures the encounter reflects any external changes to the character file
+ */
+function syncCharacterToParticipant(participant: EncounterParticipant): void {
+  const charId = participant.characterId;
+  if (!charId) return; // Ephemeral participant, no persistence needed
+
+  const charPath = path.join(DATA_ROOT, 'characters', `${charId}.json`);
+  if (!fs.existsSync(charPath)) return; // Character file doesn't exist
+
+  try {
+    const charData = JSON.parse(fs.readFileSync(charPath, 'utf-8'));
+    // Sync HP from disk to participant
+    if (charData.hp !== undefined && charData.hp !== participant.hp) {
+      participant.hp = charData.hp;
+    }
+    // Sync maxHp from disk to participant
+    if (charData.maxHp !== undefined && charData.maxHp !== participant.maxHp) {
+      participant.maxHp = charData.maxHp;
+    }
+  } catch (err) {
+    // Silently fail - don't interrupt combat for sync errors
+    console.warn(`Failed to sync from character ${charId}:`, err);
+  }
+}
+
+/**
+ * Sync all persistent participants in an encounter from disk
+ * Call this before any operation that reads participant state
+ */
+function syncEncounterFromDisk(encounter: EncounterState): void {
+  for (const participant of encounter.participants) {
+    syncCharacterToParticipant(participant);
+  }
+}
+
+// ============================================================
+// DISTANCE & RANGE UTILITIES
+// ============================================================
+
+/**
+ * Calculate distance between two positions in feet.
+ * Uses D&D 5e grid rules: 1 square = 5 feet, diagonal movement costs 5 feet.
+ * Uses Euclidean distance converted to feet.
+ */
+function calculateDistanceFeet(pos1: { x: number; y: number; z?: number }, pos2: { x: number; y: number; z?: number }): number {
+  const dx = Math.abs(pos1.x - pos2.x);
+  const dy = Math.abs(pos1.y - pos2.y);
+  const dz = Math.abs((pos1.z ?? 0) - (pos2.z ?? 0));
+  // Each grid square is 5 feet, use Euclidean distance
+  const gridDistance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  return Math.floor(gridDistance * 5); // Convert to feet (5 feet per square)
+}
+
+/**
+ * Validate that a target is within spell range.
+ * @returns null if valid, error message if out of range
+ */
+function validateSpellRange(
+  casterPos: { x: number; y: number; z?: number },
+  targetPos: { x: number; y: number; z?: number },
+  spellRange: number,
+  spellName: string
+): string | null {
+  if (spellRange === 0) {
+    // Self-only spell, no range validation needed for self-targeting
+    return null;
+  }
+
+  const distance = calculateDistanceFeet(casterPos, targetPos);
+
+  if (distance > spellRange) {
+    return `Target is out of range for ${spellName}. Distance: ${distance} ft, Range: ${spellRange} ft.`;
+  }
+
+  return null;
 }
 
 // ============================================================
@@ -179,6 +262,36 @@ const EXHAUSTION_EFFECTS: Record<number, string> = {
   4: "Hit point maximum halved",
   5: "Speed reduced to 0",
   6: "DEATH",
+};
+
+// ============================================================
+// ACTION TYPE REGISTRY
+// ============================================================
+
+interface ActionTypeDefinition {
+  name: string;
+  cost: 'action' | 'bonus_action' | 'reaction' | 'free';
+  requiresTarget: boolean;
+  requiresWeapon: boolean;
+  triggersOpportunityAttack: boolean;
+  description: string;
+}
+
+const ACTION_REGISTRY: Record<string, ActionTypeDefinition> = {
+  attack: { name: 'Attack', cost: 'action', requiresTarget: true, requiresWeapon: true, triggersOpportunityAttack: false, description: 'Make one melee or ranged attack' },
+  dash: { name: 'Dash', cost: 'action', requiresTarget: false, requiresWeapon: false, triggersOpportunityAttack: false, description: 'Double movement speed for the turn' },
+  disengage: { name: 'Disengage', cost: 'action', requiresTarget: false, requiresWeapon: false, triggersOpportunityAttack: false, description: 'Movement doesn\'t provoke opportunity attacks' },
+  dodge: { name: 'Dodge', cost: 'action', requiresTarget: false, requiresWeapon: false, triggersOpportunityAttack: false, description: 'Attacks against you have disadvantage' },
+  help: { name: 'Help', cost: 'action', requiresTarget: true, requiresWeapon: false, triggersOpportunityAttack: false, description: 'Give an ally advantage on their next ability check or attack' },
+  hide: { name: 'Hide', cost: 'action', requiresTarget: false, requiresWeapon: false, triggersOpportunityAttack: false, description: 'Make a Stealth check to hide' },
+  ready: { name: 'Ready', cost: 'action', requiresTarget: false, requiresWeapon: false, triggersOpportunityAttack: false, description: 'Prepare an action to trigger on a condition' },
+  search: { name: 'Search', cost: 'action', requiresTarget: false, requiresWeapon: false, triggersOpportunityAttack: false, description: 'Make a Perception or Investigation check' },
+  use_object: { name: 'Use Object', cost: 'action', requiresTarget: false, requiresWeapon: false, triggersOpportunityAttack: false, description: 'Interact with an object' },
+  use_magic_item: { name: 'Use Magic Item', cost: 'action', requiresTarget: false, requiresWeapon: false, triggersOpportunityAttack: false, description: 'Activate a magic item' },
+  use_special_ability: { name: 'Use Special Ability', cost: 'action', requiresTarget: false, requiresWeapon: false, triggersOpportunityAttack: false, description: 'Use a class or racial ability' },
+  shove: { name: 'Shove', cost: 'action', requiresTarget: true, requiresWeapon: false, triggersOpportunityAttack: false, description: 'Push a creature or knock it prone' },
+  grapple: { name: 'Grapple', cost: 'action', requiresTarget: true, requiresWeapon: false, triggersOpportunityAttack: false, description: 'Attempt to grab and restrain a creature' },
+  cast_spell: { name: 'Cast Spell', cost: 'action', requiresTarget: false, requiresWeapon: false, triggersOpportunityAttack: false, description: 'Cast a spell with casting time of 1 action' }
 };
 
 // ============================================================
@@ -680,7 +793,7 @@ function handleRemoveCondition(targetId: string, input: ManageConditionInput): s
   }
 
   // Special handling for "all"
-  if (input.condition === 'all' as any) {
+  if ((input.condition as string) === 'all') {
     conditionStore.set(effectiveTargetId, []);
     const content: string[] = [];
     content.push(centerText(`TARGET: ${targetId}`, 58));
@@ -1016,6 +1129,7 @@ const ManualParticipantSchema = z.object({
   immunities: z.array(DamageTypeSchema).optional(),
   vulnerabilities: z.array(DamageTypeSchema).optional(),
   conditionImmunities: z.array(ConditionSchema).optional(),
+  cover: CoverSchema.default('none').describe('Cover level for this participant (affects AC and DEX saves)'),
   // ADR-005: Link to persistent character for state synchronization
   characterId: z.string().optional().describe('Links participant to persistent character for state sync'),
 });
@@ -1081,15 +1195,38 @@ export type CreateEncounterInput = z.input<typeof createEncounterSchema>;
 /** Runtime type - fields with defaults are populated */
 export type Participant = z.infer<typeof ParticipantSchema>;
 
-// Encounter State
+// ============================================================
+// TYPE DEFINITIONS (COMB-01)
+// ============================================================
+
+type TerrainState = z.infer<typeof TerrainSchema>;
+
+/**
+ * Represents a participant in an encounter with combat-specific tracking.
+ * Extends the base Participant with initiative and combat statistics.
+ */
+interface EncounterParticipant extends Participant {
+  initiative: number;
+  surprised?: boolean;
+  damageDealt?: number;
+  damageTaken?: number;
+  healingDone?: number;
+  attacksMade?: number;
+  attacksHit?: number;
+  conditionsApplied?: string[];
+}
+
+/**
+ * Complete state of a combat encounter.
+ * Tracks all participants, terrain, lighting, and turn order.
+ */
 interface EncounterState {
   id: string;
   round: number;
-  participants: Array<Participant & { initiative: number; surprised?: boolean; damageDealt?: number; damageTaken?: number; healingDone?: number; attacksMade?: number; attacksHit?: number; conditionsApplied?: string[] }>;
-  terrain: z.infer<typeof TerrainSchema>;
-  lighting: string;
+  participants: EncounterParticipant[];
+  terrain: TerrainState;
+  lighting: Light;
   currentTurnIndex: number;
-  // End encounter fields
   status?: 'active' | 'ended';
   outcome?: 'victory' | 'defeat' | 'fled' | 'negotiated' | 'other';
   endedAt?: string;
@@ -1132,6 +1269,29 @@ export function clearDeathSaveStateForCharacter(encounterId: string, characterId
 /** Clear all death save state (for testing) */
 export function clearAllDeathSaveState(): void {
   deathSaveStore.clear();
+}
+
+/** Find which encounter (if any) a character is in */
+export function findCharacterEncounter(characterId: string): { encounterId: string; encounter: EncounterState } | null {
+  for (const [encounterId, encounter] of encounterStore.entries()) {
+    if (encounter.status === 'ended') continue;
+    const participant = encounter.participants.find(p => p.characterId === characterId || p.id === characterId);
+    if (participant) {
+      return { encounterId, encounter };
+    }
+  }
+  return null;
+}
+
+/** Get death save state for a character by ID (searches all active encounters) */
+export function getDeathSaveStateForCharacter(characterId: string): { encounterId: string; state: DeathSaveState } | null {
+  const encounterInfo = findCharacterEncounter(characterId);
+  if (!encounterInfo) return null;
+
+  const state = getDeathSaveState(encounterInfo.encounterId, characterId);
+  if (!state) return null;
+
+  return { encounterId: encounterInfo.encounterId, state };
 }
 
 // Helper: Roll d20 (when seeded, use fixed value for deterministic testing)
@@ -1214,7 +1374,7 @@ function resolveCharacterParticipant(
     ac: character.ac,
     initiativeBonus: dexModifier,
     speed: character.speed,
-    size: (character as any).size || 'medium',
+    size: ('size' in character ? (character as any).size : undefined) || 'medium',
 
     // Position (default or override)
     position: input.position || { x: 0, y: 0, z: 0 },
@@ -1222,11 +1382,14 @@ function resolveCharacterParticipant(
     // Tactical status
     isEnemy: input.isEnemy !== undefined ? input.isEnemy : (character.characterType === 'enemy'),
 
-    // Damage modifiers
-    resistances: character.resistances as any,
-    immunities: character.immunities as any,
-    vulnerabilities: character.vulnerabilities as any,
-    conditionImmunities: character.conditionImmunities as any,
+    // Damage modifiers (stored as strings, cast to proper enum types)
+    resistances: (character.resistances || []) as typeof DamageTypeSchema._type[],
+    immunities: (character.immunities || []) as typeof DamageTypeSchema._type[],
+    vulnerabilities: (character.vulnerabilities || []) as typeof DamageTypeSchema._type[],
+    conditionImmunities: (character.conditionImmunities || []) as typeof ConditionSchema._type[],
+
+    // Cover status (default to none, can be updated during combat)
+    cover: 'none' as const,
   };
 
   return {
@@ -1262,7 +1425,9 @@ export function createEncounter(input: CreateEncounterInput): string {
       if (!fs.existsSync(charPath)) {
         // Character doesn't exist - treat as ephemeral by clearing the reference
         isReference = false;
-        delete (rawParticipant as any).characterId;
+        // Remove characterId from the participant object (type-safe way to handle union type)
+        const participant = rawParticipant as Record<string, unknown>;
+        delete participant.characterId;
       }
     }
 
@@ -1548,9 +1713,6 @@ const LIGHTING_DISPLAY: Record<string, string> = {
   darkness: '⚫ Darkness',
 };
 
-/** Type for participant with initiative (encounter context) */
-type EncounterParticipant = Participant & { initiative: number };
-
 // ============================================================
 // GET ENCOUNTER HELPERS
 // ============================================================
@@ -1617,7 +1779,7 @@ function formatDeathSaveDisplay(encounterId: string, characterId: string): strin
  */
 export const getEncounterSchema = z.object({
   encounterId: z.string().describe('The ID of the encounter to retrieve'),
-  verbosity: fuzzyEnum(['minimal', 'summary', 'standard', 'detailed'] as const, 'verbosity')
+  verbosity: VerbositySchema
     .optional()
     .default('standard')
     .describe('Level of detail to return'),
@@ -1640,17 +1802,22 @@ export function getEncounter(input: GetEncounterInput | string): string {
   // Support both object input and simple string (backward compat)
   const encounterId = typeof input === 'string' ? input : input.encounterId;
   const verbosity = typeof input === 'string' ? 'standard' : (input.verbosity || 'standard');
-  
+
   const encounter = encounterStore.get(encounterId);
   if (!encounter) {
     throw new Error(`Encounter not found: ${encounterId}`);
   }
-  
+
+  // Bidirectional sync: pull latest state from disk for persistent characters
+  if (encounter.status !== 'ended') {
+    syncEncounterFromDisk(encounter);
+  }
+
   // Check if encounter has ended (preserved encounters)
   if (encounter.status === 'ended') {
     return formatEndedEncounter(encounter);
   }
-  
+
   // Get current combatant info
   const currentCombatant = encounter.participants[encounter.currentTurnIndex];
   
@@ -1925,7 +2092,7 @@ function formatEncounterDetailed(
     
     // Name header with turn indicator and persistence marker (ADR-005)
     const marker = isCurrent ? String.fromCodePoint(0x25B6) : ' ';
-    const persistMarker = (p as any).characterId ? '(persistent)' : '(ephemeral)';
+    const persistMarker = p.characterId ? '(persistent)' : '(ephemeral)';
     content.push(padText(`${marker} ${i + 1}. ${p.name} ${persistMarker}`, ENCOUNTER_WIDTH, 'left'));
     // Stats line - use HP_BAR_WIDTH constant
     const hpBar = createMiniHpBar(p.hp, maxHp, HP_BAR_WIDTH.DETAILED);
@@ -2001,7 +2168,6 @@ export function clearAllEncounters(): void {
 // EXECUTE ACTION (ADR-001 Phase 1: Attack + Movement)
 // ============================================================
 
-import { ActionTypeSchema, ActionCostSchema, WeaponTypeSchema, type ActionType, type ActionCost, type WeaponType, type DamageType, type Position } from '../types.js';
 import { parseDice } from './dice.js';
 import { expendSpellSlot, hasSpellSlot, getCharacter, findCharacterByName, findCharacterByNameWithWarnings, CharacterLookupWarning } from './characters.js';
 
@@ -2089,6 +2255,9 @@ export const executeActionSchema = z.object({
   spellDamageType: DamageTypeSchema.optional(),
   /** If true, targets take half damage on successful save */
   halfOnSave: z.boolean().optional(),
+
+  /** Spell range in feet (e.g., 120 for Fire Bolt). Used for range validation. */
+  spellRange: z.number().min(0).optional().describe('Spell range in feet. 0 = self/touch, 5 = touch, etc.'),
 });
 
 export type ExecuteActionInput = z.infer<typeof executeActionSchema>;
@@ -2156,6 +2325,7 @@ export function executeAction(input: ExecuteActionInput): string {
     case 'attack':
       return handleAttackAction(encounter, actor, input);
     case 'cast_spell':
+    case 'cast': // Alias for cast_spell
       return handleCastSpellAction(encounter, actor, input);
     case 'dash':
       return handleDashAction(encounter, actor, input);
@@ -2828,9 +2998,36 @@ function handleCastSpellAction(
   actor: Participant & { initiative: number; surprised?: boolean },
   input: ExecuteActionInput
 ): string {
+  // Require spellName for cast_spell action
+  if (!input.spellName) {
+    throw new Error('spellName is required for cast_spell action');
+  }
+
   const slotLevel = input.spellSlot ?? 0;
-  const spellName = input.spellName || 'Unknown Spell';
+  const spellName = input.spellName;
   const pactMagic = input.pactMagic || false;
+
+  // Range validation: if spellRange is provided and there's a target, validate range
+  if (input.spellRange !== undefined && (input.targetId || input.targetName)) {
+    // Resolve target
+    let targetId = input.targetId;
+    if (!targetId && input.targetName) {
+      const found = encounter.participants.find(
+        p => p.name.toLowerCase() === input.targetName!.toLowerCase()
+      );
+      if (found) targetId = found.id;
+    }
+
+    if (targetId) {
+      const target = encounter.participants.find(p => p.id === targetId);
+      if (target && target.position && actor.position) {
+        const rangeError = validateSpellRange(actor.position, target.position, input.spellRange, spellName);
+        if (rangeError) {
+          throw new Error(rangeError);
+        }
+      }
+    }
+  }
   // Use characterId for spell slot tracking if available, otherwise fall back to participantId
   const spellSlotActorId = actor.characterId || actor.id;
 
@@ -2842,6 +3039,12 @@ function handleCastSpellAction(
 
   // Cantrips don't require slots
   if (slotLevel === 0) {
+    // Check if this is a damaging cantrip with target
+    if (input.spellDamage && (input.targetId || input.targetName)) {
+      return handleDamagingCantrip(encounter, actor, input, spellName);
+    }
+
+    // Non-damaging cantrip or no target specified
     const content: string[] = [];
     content.push(centerText(`${actor.name.toUpperCase()} CASTS CANTRIP`, 50));
     content.push('');
@@ -2857,16 +3060,22 @@ function handleCastSpellAction(
     return createBox('CAST SPELL', content, undefined, 'HEAVY');
   }
 
-  // Check if actor has required spell slot
-  if (!hasSpellSlot(spellSlotActorId, slotLevel, pactMagic)) {
-    const slotType = pactMagic ? 'pact magic slot' : `level ${slotLevel} spell slot`;
-    throw new Error(`${actor.name} has no available ${slotType}`);
-  }
+  // For ephemeral actors (no characterId), skip spell slot validation
+  // This allows ad-hoc NPCs and playtesting without creating full characters
+  const isEphemeral = !actor.characterId;
 
-  // Expend the spell slot
-  const expendResult = expendSpellSlot(spellSlotActorId, slotLevel, pactMagic);
-  if (!expendResult.success) {
-    throw new Error(expendResult.error || 'Failed to expend spell slot');
+  if (!isEphemeral) {
+    // Check if actor has required spell slot
+    if (!hasSpellSlot(spellSlotActorId, slotLevel, pactMagic)) {
+      const slotType = pactMagic ? 'pact magic slot' : `level ${slotLevel} spell slot`;
+      throw new Error(`${actor.name} has no available ${slotType}`);
+    }
+
+    // Expend the spell slot
+    const expendResult = expendSpellSlot(spellSlotActorId, slotLevel, pactMagic);
+    if (!expendResult.success) {
+      throw new Error(expendResult.error || 'Failed to expend spell slot');
+    }
   }
 
   // Check if this is an AoE spell
@@ -2902,6 +3111,100 @@ function handleCastSpellAction(
   content.push(padText('✓ Spell slot expended', 50, 'left'));
 
   return createBox('CAST SPELL', content, undefined, 'HEAVY');
+}
+
+/**
+ * Handle damaging cantrips (Fire Bolt, Ray of Frost, etc.)
+ * Makes spell attack roll and deals damage on hit.
+ */
+function handleDamagingCantrip(
+  encounter: EncounterState,
+  actor: Participant & { initiative: number; surprised?: boolean },
+  input: ExecuteActionInput,
+  spellName: string
+): string {
+  // Find target
+  const target = input.targetId
+    ? encounter.participants.find(p => p.id === input.targetId)
+    : encounter.participants.find(p => p.name.toLowerCase() === input.targetName?.toLowerCase());
+
+  if (!target) {
+    throw new Error(`Target not found: ${input.targetId || input.targetName}`);
+  }
+
+  // Roll spell attack
+  const attackRoll = input.manualAttackRoll ?? Math.floor(Math.random() * 20) + 1;
+  const spellAttackBonus = 5; // Default +5 for cantrips (proficiency + spellcasting mod)
+  const attackTotal = attackRoll + spellAttackBonus;
+  const isHit = attackTotal >= target.ac;
+  const isCritical = attackRoll === 20;
+
+  const content: string[] = [];
+  content.push(centerText(`${actor.name.toUpperCase()} CASTS ${spellName.toUpperCase()}`, 50));
+  content.push('');
+  content.push('─'.repeat(50));
+  content.push('');
+  content.push(centerText(`Target: ${target.name}`, 50));
+  content.push('');
+  content.push(centerText(`Attack Roll: ${attackRoll} + ${spellAttackBonus} = ${attackTotal} vs AC ${target.ac}`, 50));
+  content.push('');
+
+  if (isHit) {
+    // Roll damage
+    const damageExpr = input.spellDamage!;
+    const damageType = input.spellDamageType || 'fire';
+
+    // Parse and roll damage dice
+    let baseDamage = 0;
+    const diceMatch = damageExpr.match(/(\d+)d(\d+)/);
+    if (diceMatch) {
+      const numDice = parseInt(diceMatch[1]) * (isCritical ? 2 : 1); // Double dice on crit
+      const dieSize = parseInt(diceMatch[2]);
+      for (let i = 0; i < numDice; i++) {
+        baseDamage += Math.floor(Math.random() * dieSize) + 1;
+      }
+    }
+    // Add flat modifier if present
+    const modMatch = damageExpr.match(/\+\s*(\d+)/);
+    if (modMatch) {
+      baseDamage += parseInt(modMatch[1]);
+    }
+
+    // Use manual damage if provided
+    if (input.manualDamageRoll !== undefined) {
+      baseDamage = input.manualDamageRoll;
+    }
+
+    // Apply damage modifiers (resistances, vulnerabilities)
+    const finalDamage = applyDamageModifiers(target, baseDamage, damageType as DamageType);
+
+    // Apply damage
+    const oldHp = target.hp;
+    target.hp = Math.max(0, target.hp - finalDamage);
+
+    // Sync HP to persistent character
+    syncHpToCharacter(target);
+
+    const hitType = isCritical ? 'CRITICAL HIT!' : 'HIT!';
+    content.push(centerText(`⚔ ${hitType}`, 50));
+    content.push('');
+    content.push(centerText(`Damage: ${finalDamage} ${damageType}`, 50));
+    content.push(centerText(`${target.name}: ${oldHp} → ${target.hp}/${target.maxHp} HP`, 50));
+
+    if (target.hp === 0) {
+      content.push('');
+      content.push(centerText(`💀 ${target.name} falls!`, 50));
+    }
+  } else {
+    content.push(centerText('✗ MISS', 50));
+  }
+
+  content.push('');
+  content.push('─'.repeat(50));
+  content.push('');
+  content.push(padText(`Action Cost: ${input.actionCost || 'action'}`, 50, 'left'));
+
+  return createBox('CANTRIP', content, undefined, 'HEAVY');
 }
 
 /**
@@ -2947,6 +3250,7 @@ function handleAoeSpell(
   const affectedTargets: Array<{
     participant: Participant & { initiative: number };
     distance: number;
+    cover: string;
   }> = [];
 
   for (const p of encounter.participants) {
@@ -2974,7 +3278,9 @@ function handleAoeSpell(
     }
 
     if (distance <= radiusSquares) {
-      affectedTargets.push({ participant: p, distance });
+      // Determine cover from AoE origin to target (used for DEX saves)
+      const cover = p.cover || 'none';
+      affectedTargets.push({ participant: p, distance, cover });
     }
   }
 
@@ -2986,6 +3292,8 @@ function handleAoeSpell(
   const results: Array<{
     name: string;
     saveRoll: number;
+    saveModifier: number;
+    coverBonus: number;
     saveTotal: number;
     saved: boolean;
     damage: number;
@@ -2994,13 +3302,16 @@ function handleAoeSpell(
     killed: boolean;
   }> = [];
 
-  for (const { participant } of affectedTargets) {
+  for (const { participant, cover } of affectedTargets) {
     // Get save modifier (use DEX for most, but respect saveAbility)
     const saveModifier = getAbilityModifier(participant, saveAbility);
 
+    // Apply cover bonus to DEX saves per D&D 5e rules
+    const coverBonus = saveAbility.toLowerCase() === 'dex' ? getCoverBonus(cover) : 0;
+
     // Roll saving throw
     const saveRoll = Math.floor(Math.random() * 20) + 1;
-    const saveTotal = saveRoll + saveModifier;
+    const saveTotal = saveRoll + saveModifier + coverBonus;
     const saved = saveTotal >= saveDC;
 
     // Calculate damage (half on save if applicable)
@@ -3022,6 +3333,8 @@ function handleAoeSpell(
     results.push({
       name: participant.name,
       saveRoll,
+      saveModifier,
+      coverBonus,
       saveTotal,
       saved,
       damage: adjustedDamage,
@@ -3060,8 +3373,15 @@ function handleAoeSpell(
       const hpBar = `[${r.newHp}/${r.maxHp}]`;
       const killMark = r.killed ? ' ☠ DEAD' : '';
 
+      // Build save breakdown showing cover bonus if applicable
+      let saveBreakdown = `${r.saveRoll}+${r.saveModifier}`;
+      if (r.coverBonus > 0) {
+        saveBreakdown += `+${r.coverBonus}(cover)`;
+      }
+      saveBreakdown += `=${r.saveTotal}`;
+
       content.push(padText(`${r.name}`, WIDTH, 'left'));
-      content.push(padText(`  Save: ${r.saveRoll}+${r.saveTotal - r.saveRoll}=${r.saveTotal} ${saveResult}`, WIDTH, 'left'));
+      content.push(padText(`  Save: ${saveBreakdown} ${saveResult}`, WIDTH, 'left'));
       content.push(padText(`  Damage: ${r.damage} ${damageType} → HP ${hpBar}${killMark}`, WIDTH, 'left'));
     }
   }
@@ -3093,10 +3413,10 @@ function getAbilityModifier(
   participant: Participant & { initiative: number },
   ability: string
 ): number {
-  // Try to get from stats if available
-  const stats = (participant as any).stats;
-  if (stats) {
-    const score = stats[ability.toLowerCase()];
+  // Try to get from stats if available (for participants created from full character data)
+  const participantWithStats = participant as Partial<{ stats: Record<string, number> }>;
+  if (participantWithStats.stats) {
+    const score = participantWithStats.stats[ability.toLowerCase()];
     if (typeof score === 'number') {
       return Math.floor((score - 10) / 2);
     }
@@ -3117,15 +3437,15 @@ function applyDamageModifiers(
   damageType: string
 ): number {
   // Check immunity
-  if (participant.immunities?.includes(damageType as any)) {
+  if (participant.immunities?.some(immunity => immunity === damageType)) {
     return 0;
   }
   // Check resistance
-  if (participant.resistances?.includes(damageType as any)) {
+  if (participant.resistances?.some(resistance => resistance === damageType)) {
     return Math.floor(damage / 2);
   }
   // Check vulnerability
-  if (participant.vulnerabilities?.includes(damageType as any)) {
+  if (participant.vulnerabilities?.some(vulnerability => vulnerability === damageType)) {
     return damage * 2;
   }
   return damage;
@@ -3327,7 +3647,7 @@ export function advanceTurn(input: AdvanceTurnInput): string {
   }
 
   // Check if encounter has ended
-  if ((encounter as any).status === 'ended') {
+  if (encounter.status === 'ended') {
     throw new Error(`Encounter already ended: ${encounterId}`);
   }
 
@@ -3636,13 +3956,110 @@ function performDeathSaveRoll(input: RollDeathSaveInput, rollMode: 'normal' | 'a
  * - stabilized: Third success reached - stable but unconscious
  * - death: Third failure reached - character dies
  */
-type DeathSaveOutcome = 
+type DeathSaveOutcome =
   | { type: 'nat20'; message: string }
   | { type: 'nat1'; message: string }
   | { type: 'success'; message: string }
   | { type: 'failure'; message: string }
   | { type: 'stabilized'; message: string }
   | { type: 'death'; message: string };
+
+// ============================================================
+// COMB-02: Consolidated Death Save Logic
+// ============================================================
+
+/**
+ * Simplified death save tracker interface (COMB-02).
+ * Used by the pure evaluateDeathSave() helper.
+ */
+interface DeathSaveTracker {
+  successes: number;
+  failures: number;
+}
+
+/**
+ * Simplified death save outcome (COMB-02).
+ * Maps to player-facing statuses.
+ */
+type SimplifiedDeathSaveOutcome =
+  | { status: 'success'; message: string }
+  | { status: 'failure'; message: string }
+  | { status: 'stable'; message: string }
+  | { status: 'dead'; message: string }
+  | { status: 'revived'; message: string };
+
+/**
+ * Pure function to evaluate a death saving throw (COMB-02).
+ *
+ * Implements D&D 5e death save rules:
+ * - Natural 20: Revive at 1 HP
+ * - Natural 1: Two failures
+ * - Total >= 10: One success (3 = stable)
+ * - Total < 10: One failure (3 = dead)
+ *
+ * @param roll - The natural d20 roll (1-20)
+ * @param tracker - Current death save counts
+ * @param modifier - Bonus/penalty to apply (default 0)
+ * @returns Object with outcome and updated tracker
+ */
+function evaluateDeathSave(
+  roll: number,
+  tracker: DeathSaveTracker,
+  modifier: number = 0
+): { outcome: SimplifiedDeathSaveOutcome; updatedTracker: DeathSaveTracker } {
+  const total = roll + modifier;
+  const updated: DeathSaveTracker = { ...tracker };
+
+  // Natural 20: Immediate revival
+  if (roll === 20) {
+    return {
+      outcome: { status: 'revived', message: '✨ NATURAL 20! ✨ Regains consciousness at 1 HP!' },
+      updatedTracker: { successes: 0, failures: 0 },
+    };
+  }
+
+  // Natural 1: Two failures
+  if (roll === 1) {
+    updated.failures += 2;
+    if (updated.failures >= 3) {
+      return {
+        outcome: { status: 'dead', message: '💀 NATURAL 1! Two failures - DEATH! 💀' },
+        updatedTracker: updated,
+      };
+    }
+    return {
+      outcome: { status: 'failure', message: '⚠️ NATURAL 1! Two failures added!' },
+      updatedTracker: updated,
+    };
+  }
+
+  // Normal success/failure based on total
+  if (total >= 10) {
+    updated.successes += 1;
+    if (updated.successes >= 3) {
+      return {
+        outcome: { status: 'stable', message: '★ STABILIZED! ★ No longer dying.' },
+        updatedTracker: updated,
+      };
+    }
+    return {
+      outcome: { status: 'success', message: 'Success! Holding on...' },
+      updatedTracker: updated,
+    };
+  } else {
+    updated.failures += 1;
+    if (updated.failures >= 3) {
+      return {
+        outcome: { status: 'dead', message: '💀 Three failures - DEATH! 💀' },
+        updatedTracker: updated,
+      };
+    }
+    return {
+      outcome: { status: 'failure', message: 'Failure. Slipping away...' },
+      updatedTracker: updated,
+    };
+  }
+}
 
 /**
  * Determine the outcome of a death saving throw based on the roll.
@@ -4017,8 +4434,8 @@ export const renderBattlefieldSchema = z.object({
   }).optional(),
   /** Entity ID to center the viewport on */
   focusOn: z.string().optional(),
-  /** Level of detail for the legend: minimal, standard, or detailed */
-  legendDetail: fuzzyEnum(['minimal', 'standard', 'detailed'] as const, 'verbosity').default('standard'),
+  /** Level of detail for the legend: minimal, summary, standard, or detailed */
+  legendDetail: VerbositySchema.default('standard'),
 });
 
 export type RenderBattlefieldInput = z.input<typeof renderBattlefieldSchema>;
@@ -5306,7 +5723,7 @@ function calculateParticipantUpdates(encounterId: string, participants: Array<Pa
   for (const p of participants) {
     const snapshot = snapshots?.get(p.id);
     const initialHp = snapshot?.initialHp ?? p.maxHp;
-    const charId = (p as any).characterId;
+    const charId = p.characterId;
 
     // Get current conditions for this participant
     // Check both characterId and participantId since conditions may be stored under either
@@ -5426,7 +5843,7 @@ export const manageEncounterSchema = z.discriminatedUnion('operation', [
   z.object({
     operation: z.literal('get'),
     encounterId: z.string(),
-    verbosity: fuzzyEnum(['minimal', 'summary', 'standard', 'detailed'] as const, 'verbosity').optional().default('standard'),
+    verbosity: VerbositySchema.optional().default('standard'),
   }),
   
   // END operation - extends endEncounterSchema with participantUpdates
@@ -5452,6 +5869,14 @@ export const manageEncounterSchema = z.discriminatedUnion('operation', [
     operation: z.literal('list'),
     includeEnded: z.boolean().optional().default(false),
   }),
+
+  // ADD_PARTICIPANT operation - add participant mid-encounter
+  z.object({
+    operation: z.literal('add_participant'),
+    encounterId: z.string(),
+    participant: ParticipantSchema,
+    manualInitiative: z.number().optional().describe('Manual initiative roll (otherwise rolls automatically)'),
+  }),
 ]);
 
 export type ManageEncounterInput = z.infer<typeof manageEncounterSchema>;
@@ -5472,6 +5897,8 @@ export function manageEncounter(input: ManageEncounterInput): string {
       return handleManageEncounterCommit(input);
     case 'list':
       return handleManageEncounterList(input);
+    case 'add_participant':
+      return handleManageEncounterAddParticipant(input);
     default:
       throw new Error(`Unknown operation: ${(input as any).operation}`);
   }
@@ -5488,7 +5915,8 @@ function handleManageEncounterCreate(input: Extract<ManageEncounterInput, { oper
       if (!fs.existsSync(charPath)) {
         // Character doesn't exist - treat as ephemeral by deleting characterId property
         // Must use delete so 'characterId' in p returns false
-        delete (p as any).characterId;
+        const participantRecord = p as Record<string, unknown>;
+        delete participantRecord.characterId;
         continue;
       }
 
@@ -5648,7 +6076,7 @@ function handleManageEncounterCommit(input: Extract<ManageEncounterInput, { oper
   }
 
   for (const p of encounter.participants) {
-    const charId = (p as any).characterId;
+    const charId = p.characterId;
 
     // Skip ephemeral participants
     if (!charId) {
@@ -5849,5 +6277,96 @@ function handleManageEncounterList(input: Extract<ManageEncounterInput, { operat
   
   return createBox(`ENCOUNTERS (${count})`, content, WIDTH, 'LIGHT');
 
+}
+
+/**
+ * Handle ADD_PARTICIPANT operation - add participant mid-encounter
+ */
+function handleManageEncounterAddParticipant(input: Extract<ManageEncounterInput, { operation: 'add_participant' }>): string {
+  const encounter = encounterStore.get(input.encounterId);
+  if (!encounter) {
+    throw new Error(`Encounter not found: ${input.encounterId}`);
+  }
+
+  const participant = input.participant;
+
+  // Check for duplicate ID
+  const existingById = encounter.participants.find(p => p.id === participant.id);
+  if (existingById) {
+    throw new Error(`Participant with ID '${participant.id}' already exists in encounter`);
+  }
+
+  // Validate position is within terrain bounds
+  const terrain = encounter.terrain;
+  if (terrain && participant.position) {
+    const pos = participant.position;
+    if (pos.x < 0 || pos.x >= terrain.width || pos.y < 0 || pos.y >= terrain.height) {
+      throw new Error(`Position (${pos.x}, ${pos.y}) is out of bounds for terrain ${terrain.width}x${terrain.height}`);
+    }
+  }
+
+  // If characterId provided, validate and load HP
+  if (participant.characterId) {
+    const charPath = path.join(DATA_ROOT, 'characters', `${participant.characterId}.json`);
+    if (fs.existsSync(charPath)) {
+      try {
+        const charData = JSON.parse(fs.readFileSync(charPath, 'utf-8'));
+        (participant as any).hp = charData.hp;
+        (participant as any).maxHp = charData.maxHp;
+      } catch {
+        // If we can't read, use provided values
+      }
+    }
+  }
+
+  // Roll initiative or use manual value
+  let initiative: number;
+  if (input.manualInitiative !== undefined) {
+    initiative = input.manualInitiative;
+  } else {
+    const initiativeBonus = participant.initiativeBonus ?? 0;
+    initiative = Math.floor(Math.random() * 20) + 1 + initiativeBonus;
+  }
+
+  // Create encounter participant with initiative
+  const encounterParticipant: EncounterParticipant = {
+    ...participant,
+    initiative,
+    surprised: false,
+  };
+
+  // Add participant to the encounter in the correct initiative order
+  // Find correct position to insert (sorted by initiative descending)
+  let insertIdx = encounter.participants.findIndex(p => p.initiative < initiative);
+  if (insertIdx === -1) {
+    insertIdx = encounter.participants.length;
+  }
+  encounter.participants.splice(insertIdx, 0, encounterParticipant);
+
+  // Adjust currentTurnIndex if needed (if inserting before current turn)
+  if (insertIdx <= encounter.currentTurnIndex) {
+    encounter.currentTurnIndex++;
+  }
+
+  // Capture snapshot for the new participant
+  captureParticipantSnapshots(input.encounterId, [encounterParticipant]);
+
+  // Build response
+  const WIDTH = 60;
+  const content: string[] = [];
+  content.push('');
+  content.push(`  ${participant.name} joined the encounter!`);
+  content.push(`  Initiative: ${initiative}`);
+  content.push(`  Position: (${participant.position?.x ?? 0}, ${participant.position?.y ?? 0})`);
+  content.push(`  HP: ${participant.hp}/${participant.maxHp}`);
+  content.push(`  AC: ${participant.ac}`);
+  if (participant.characterId) {
+    content.push(`  Linked to character: ${participant.characterId}`);
+  }
+  content.push('');
+  content.push(`  Total participants: ${encounter.participants.length}`);
+  content.push('');
+
+  return createBox('PARTICIPANT ADDED', content, WIDTH, 'LIGHT');
 }
 

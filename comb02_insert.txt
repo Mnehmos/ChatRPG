@@ -1,0 +1,128 @@
+// COMB-02: Death Save Logic Extraction
+// ============================================================
+
+/**
+ * Simplified death save tracker for the evaluateDeathSave helper.
+ * Contains only the essential success/failure counts.
+ */
+interface DeathSaveTracker {
+  successes: number;
+  failures: number;
+}
+
+/**
+ * Possible outcomes of a death saving throw.
+ *
+ * D&D 5e PHB p.197 defines these outcomes:
+ * - success: Roll 10+ (with modifiers) - one step closer to stability
+ * - failure: Roll 9- (with modifiers) - one step closer to death
+ * - stable: Third success reached - stable but unconscious
+ * - dead: Third failure reached - character dies
+ * - revived: Natural 20 - regain consciousness at 1 HP
+ */
+type DeathSaveOutcome =
+  | { status: 'success'; message: string }
+  | { status: 'failure'; message: string }
+  | { status: 'stable'; message: string }
+  | { status: 'dead'; message: string }
+  | { status: 'revived'; message: string };
+
+/**
+ * Evaluate a death saving throw and return the outcome.
+ *
+ * This is the core death save logic extracted from rollDeathSave for reusability.
+ * It handles all D&D 5e death save rules (PHB p.197):
+ * 1. Natural 20: Immediate revival at 1 HP
+ * 2. Natural 1: Counts as TWO failures (can cause instant death)
+ * 3. Total >= 10: One success
+ * 4. Total < 10: One failure
+ * 5. Three successes: Character becomes stable
+ * 6. Three failures: Character dies
+ *
+ * @param roll - The natural d20 roll (1-20, before modifiers)
+ * @param tracker - Current death save tracker (successes and failures)
+ * @param modifier - Optional modifier to add to the roll (default 0)
+ * @returns Object with the outcome and updated tracker
+ */
+function evaluateDeathSave(
+  roll: number,
+  tracker: DeathSaveTracker,
+  modifier: number = 0
+): { outcome: DeathSaveOutcome; updatedTracker: DeathSaveTracker } {
+  // Clone tracker to avoid mutation
+  const updatedTracker: DeathSaveTracker = {
+    successes: tracker.successes,
+    failures: tracker.failures
+  };
+
+  // Handle natural 20 (revive with 1 HP)
+  if (roll === 20) {
+    // Natural 20 clears all death saves and revives
+    updatedTracker.successes = 0;
+    updatedTracker.failures = 0;
+    return {
+      outcome: { status: 'revived', message: '✨ NATURAL 20! ✨ Regains consciousness at 1 HP!' },
+      updatedTracker
+    };
+  }
+
+  // Handle natural 1 (2 failures)
+  if (roll === 1) {
+    updatedTracker.failures += 2;
+    if (updatedTracker.failures >= 3) {
+      updatedTracker.failures = 3;
+      return {
+        outcome: { status: 'dead', message: '💀 NATURAL 1! Two failures - DEATH! 💀' },
+        updatedTracker
+      };
+    }
+    return {
+      outcome: { status: 'failure', message: '⚠️ NATURAL 1! Two failures added!' },
+      updatedTracker
+    };
+  }
+
+  // Calculate total with modifier
+  const total = roll + modifier;
+
+  // Handle 10+ (success)
+  if (total >= 10) {
+    updatedTracker.successes += 1;
+    // Check for stabilization (3 successes)
+    if (updatedTracker.successes >= 3) {
+      updatedTracker.successes = 3;
+      return {
+        outcome: { status: 'stable', message: '★ STABILIZED! ★ No longer dying.' },
+        updatedTracker
+      };
+    }
+    return {
+      outcome: { status: 'success', message: 'Success! Holding on...' },
+      updatedTracker
+    };
+  }
+
+  // Handle <10 (failure)
+  updatedTracker.failures += 1;
+  // Check for death (3 failures)
+  if (updatedTracker.failures >= 3) {
+    updatedTracker.failures = 3;
+    return {
+      outcome: { status: 'dead', message: '💀 Three failures - DEATH! 💀' },
+      updatedTracker
+    };
+  }
+  return {
+    outcome: { status: 'failure', message: 'Failure. Slipping away...' },
+    updatedTracker
+  };
+}
+
+// Legacy internal type for backward compatibility with existing formatting functions
+type DeathSaveOutcomeInternal =
+  | { type: 'nat20'; message: string }
+  | { type: 'nat1'; message: string }
+  | { type: 'success'; message: string }
+  | { type: 'failure'; message: string }
+  | { type: 'stabilized'; message: string }
+  | { type: 'death'; message: string };

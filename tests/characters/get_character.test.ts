@@ -193,4 +193,69 @@ describe('get_character', () => {
       expect(text).toContain('CHA');
     });
   });
+
+  describe('Death Save State Exposure', () => {
+    it('should show death save state when character is dying in an active encounter', async () => {
+      // Create a character
+      const result = await handleToolCall('create_character', {
+        name: 'Death Test Hero',
+        race: 'Human',
+        class: 'Fighter',
+        level: 5,
+        stats: { str: 16, dex: 14, con: 14, int: 10, wis: 12, cha: 10 },
+      });
+      const text = getTextContent(result);
+      const idMatch = text.match(/Character ID: ([a-z0-9-]+)/);
+      const characterId = idMatch ? idMatch[1] : '';
+      expect(characterId).not.toBe('');
+
+      // Import combat functions
+      const { clearAllEncounters, clearAllDeathSaveState } = await import('../../src/modules/combat.js');
+      clearAllEncounters();
+      clearAllDeathSaveState();
+
+      // Directly set the character's HP to 0 by modifying the file
+      const charFilePath = path.join(DATA_DIR, `${characterId}.json`);
+      const charData = JSON.parse(fs.readFileSync(charFilePath, 'utf-8'));
+      charData.hp = 0;
+      fs.writeFileSync(charFilePath, JSON.stringify(charData, null, 2), 'utf-8');
+
+      // Create encounter with the character at 0 HP
+      const encounterResult = await handleToolCall('manage_encounter', {
+        operation: 'create',
+        participants: [
+          { id: characterId, characterId: characterId, name: 'Death Test Hero', hp: 0, maxHp: 44, ac: 18, initiativeBonus: 2, position: { x: 5, y: 5 } },
+          { id: 'enemy-1', name: 'Goblin', hp: 7, maxHp: 7, ac: 13, initiativeBonus: 1, position: { x: 10, y: 10 }, isEnemy: true },
+        ],
+      });
+      const encText = getTextContent(encounterResult);
+      const encMatch = encText.match(/Encounter ID:\s*([a-zA-Z0-9-]+)/i);
+      const encounterId = encMatch ? encMatch[1] : '';
+      expect(encounterId).not.toBe('');
+
+      // Roll a death save to create death save state
+      const deathSaveResult = await handleToolCall('roll_death_save', {
+        encounterId,
+        characterId,
+        manualRoll: 5, // Force a failure
+      });
+      expect(deathSaveResult.isError).toBeUndefined();
+
+      // Now get the character - should show death save state
+      const getResult = await handleToolCall('get_character', {
+        characterId,
+      });
+      expect(getResult.isError).toBeUndefined();
+      const getText = getTextContent(getResult);
+
+      // Should show death saves section
+      expect(getText).toMatch(/death.*save/i);
+      expect(getText).toMatch(/success|failure/i);
+      expect(getText).toMatch(/dying|stable|dead/i);
+
+      // Cleanup
+      clearAllEncounters();
+      clearAllDeathSaveState();
+    });
+  });
 });

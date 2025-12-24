@@ -30,7 +30,7 @@ import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import * as os from 'os';
-import { calculateEffectiveStats, getActiveConditions, manageCondition } from './combat.js';
+import { calculateEffectiveStats, getActiveConditions, manageCondition, getDeathSaveStateForCharacter, findCharacterEncounter } from './combat.js';
 import { parseDice } from './dice.js';
 
 // ============================================================
@@ -539,7 +539,7 @@ export interface Character {
  * Default hit die by class (D&D 5e standard).
  * Custom classes can override via customClass.hitDie.
  */
-const HIT_DIE_BY_CLASS: Record<string, number> = {
+const CLASS_HIT_DICE: Record<string, number> = {
   'Barbarian': 12,
   'Fighter': 10,
   'Paladin': 10,
@@ -567,16 +567,16 @@ function getHitDie(className: string, customClass?: CustomClass): number {
     return customClass.hitDie;
   }
   // Check standard classes (case-insensitive)
-  const standardHitDie = HIT_DIE_BY_CLASS[className];
+  const standardHitDie = CLASS_HIT_DICE[className];
   if (standardHitDie) {
     return standardHitDie;
   }
   // Check case-insensitive match
-  const normalizedClass = Object.keys(HIT_DIE_BY_CLASS).find(
+  const normalizedClass = Object.keys(CLASS_HIT_DICE).find(
     k => k.toLowerCase() === className.toLowerCase()
   );
   if (normalizedClass) {
-    return HIT_DIE_BY_CLASS[normalizedClass];
+    return CLASS_HIT_DICE[normalizedClass];
   }
   // Default to d8 for unknown classes
   return 8;
@@ -905,6 +905,25 @@ export function findCharacterByName(name: string): string | null {
 // CREATE CHARACTER HANDLER
 // ============================================================
 
+/**
+ * Creates a new D&D 5e character with comprehensive stats and features.
+ * Supports both standard classes (Fighter, Wizard, Rogue, etc.) and custom classes.
+ * Automatically calculates ability modifiers, HP, AC, proficiency bonus, and spell slots.
+ *
+ * @param input - Character creation parameters including name, race, class, level, and ability scores
+ * @returns Object containing success status, created character data, and formatted markdown summary
+ *
+ * @example
+ * ```typescript
+ * const result = createCharacter({
+ *   name: "Gandalf",
+ *   race: "Human",
+ *   class: "Wizard",
+ *   level: 5,
+ *   abilityScores: { str: 8, dex: 14, con: 12, int: 18, wis: 15, cha: 10 }
+ * });
+ * ```
+ */
 export function createCharacter(input: CreateCharacterInput): {
   success: boolean;
   character: Character;
@@ -1087,6 +1106,23 @@ function formatCharacterSheet(character: Character): string {
   if (effectiveStats.maxHp.modified) {
     const hpNote = `Base: ${character.hp}/${character.maxHp} → Effective: ${displayHp}/${displayMaxHp}`;
     content.push(centerText(hpNote, WIDTH));
+  }
+
+  // Show death save state if character is dying in an active encounter
+  const deathSaveInfo = getDeathSaveStateForCharacter(character.id);
+  if (deathSaveInfo) {
+    content.push('');
+    content.push(centerText('☠ DEATH SAVES ☠', WIDTH));
+    const successMarkers = '●'.repeat(deathSaveInfo.state.successes) + '○'.repeat(3 - deathSaveInfo.state.successes);
+    const failureMarkers = '●'.repeat(deathSaveInfo.state.failures) + '○'.repeat(3 - deathSaveInfo.state.failures);
+    content.push(centerText(`Successes: ${successMarkers}  Failures: ${failureMarkers}`, WIDTH));
+    if (deathSaveInfo.state.isStable) {
+      content.push(centerText('STATUS: STABLE (unconscious)', WIDTH));
+    } else if (deathSaveInfo.state.isDead) {
+      content.push(centerText('STATUS: DEAD', WIDTH));
+    } else {
+      content.push(centerText('STATUS: DYING', WIDTH));
+    }
   }
   content.push('');
 
@@ -1572,6 +1608,32 @@ function formatCharacterUpdate(
 // UPDATE CHARACTER HANDLER
 // ============================================================
 
+/**
+ * Updates character attributes including HP, conditions, equipment, and more.
+ * Supports both single and batch update operations with atomic changes.
+ * Validates HP changes against max HP and handles temporary HP separately.
+ *
+ * @param input - Update parameters including character identifier and fields to modify
+ * @returns Object containing success status, updated character data, and formatted summary
+ *
+ * @example
+ * ```typescript
+ * // Single update (damage)
+ * const result = updateCharacter({
+ *   characterId: "char-123",
+ *   hpChange: -15,
+ *   reason: "Hit by goblin arrow"
+ * });
+ *
+ * // Batch update
+ * const batchResult = updateCharacter({
+ *   batch: [
+ *     { characterName: "Gandalf", hpChange: 10 },
+ *     { characterName: "Frodo", condition: { add: "frightened" } }
+ *   ]
+ * });
+ * ```
+ */
 export function updateCharacter(input: UpdateCharacterInput): {
   success: boolean;
   character?: Character;
@@ -1908,6 +1970,25 @@ function formatBatchUpdate(results: Array<{
 // GET CHARACTER HANDLER
 // ============================================================
 
+/**
+ * Retrieves character data by ID or name, with support for batch operations.
+ * Returns comprehensive character information including stats, HP, conditions, and equipment.
+ * Supports fuzzy name matching for convenience.
+ *
+ * @param input - Character identifier (characterId or characterName) or batch of identifiers
+ * @returns Object containing success status, character data (if found), and formatted markdown display
+ *
+ * @example
+ * ```typescript
+ * // Single character retrieval
+ * const result = getCharacter({ characterName: "Gandalf" });
+ *
+ * // Batch retrieval
+ * const batchResult = getCharacter({
+ *   batch: [{ characterId: "id1" }, { characterName: "Frodo" }]
+ * });
+ * ```
+ */
 export function getCharacter(input: GetCharacterInput): {
   success: boolean;
   character?: Character;
@@ -2263,6 +2344,35 @@ function evaluateDCResult(
   return total >= dc ? 'success' : 'failure';
 }
 
+/**
+ * Performs D&D 5e ability checks, skill checks, saving throws, and attack rolls.
+ * Supports advantage/disadvantage mechanics, contested checks, and DC-based resolution.
+ * Automatically applies character proficiency bonuses and ability modifiers.
+ *
+ * @param input - Check parameters including type (skill/ability/save/attack), character, DC, and modifiers
+ * @returns Object containing success status, roll results, and formatted markdown output
+ *
+ * @example
+ * ```typescript
+ * // Skill check with DC
+ * const result = rollCheck({
+ *   characterName: "Gandalf",
+ *   checkType: "skill",
+ *   skill: "arcana",
+ *   dc: 15,
+ *   advantage: true
+ * });
+ *
+ * // Contested check
+ * const contested = rollCheck({
+ *   characterName: "Frodo",
+ *   checkType: "ability",
+ *   ability: "dex",
+ *   contestedBy: "orc-id",
+ *   contestedCheck: { type: "ability", skillOrAbility: "str" }
+ * });
+ * ```
+ */
 export function rollCheck(input: RollCheckInput): {
   success: boolean;
   markdown: string;
@@ -2291,7 +2401,7 @@ export function rollCheck(input: RollCheckInput): {
     const charResult = getCharacter({
       characterId: input.characterId,
       characterName: input.characterName,
-    } as any);
+    });
 
     if (!charResult.success || !charResult.character) {
       return {
@@ -2364,7 +2474,7 @@ function handleContestedCheck(
   error?: string;
 } {
   // Load contested character
-  const charResult = getCharacter({ characterId: input.contestedBy } as any);
+  const charResult = getCharacter({ characterId: input.contestedBy });
   if (!charResult.success || !charResult.character) {
     return {
       success: false,
@@ -2389,8 +2499,8 @@ function handleContestedCheck(
   const contestedInput: RollCheckInput = {
     characterId: character2.id,
     checkType: input.contestedCheck!.type,
-    skill: input.contestedCheck!.type === 'skill' ? input.contestedCheck!.skillOrAbility as any : undefined,
-    ability: input.contestedCheck!.type === 'ability' ? input.contestedCheck!.skillOrAbility as any : undefined,
+    skill: input.contestedCheck!.type === 'skill' ? input.contestedCheck!.skillOrAbility as Skill : undefined,
+    ability: input.contestedCheck!.type === 'ability' ? input.contestedCheck!.skillOrAbility as Ability : undefined,
   };
 
   // Perform roll for character 2 using structured data (avoids regex parsing)
@@ -2685,10 +2795,10 @@ function deleteCharacterBatch(
 
   for (const request of requests) {
     // Need to get character info before deleting
-    const getResult = getCharacter(request as any);
-    
+    const getResult = getCharacter(request);
+
     if (getResult.success && getResult.character) {
-      const result = deleteCharacter(request as any);
+      const result = deleteCharacter(request);
       if (result.success) {
         deleted.push(getResult.character);
       } else {
@@ -2901,6 +3011,16 @@ export function takeRest(input: TakeRestInput | { batch: TakeRestInput[] }): {
       success: false,
       markdown: '',
       error: 'Either characterId or characterName must be provided',
+    };
+  }
+
+  // Check if character is in active combat - block rest during combat
+  const activeEncounter = findCharacterEncounter(characterId);
+  if (activeEncounter) {
+    return {
+      success: false,
+      markdown: '',
+      error: `Cannot rest during combat. ${characterId} is currently in encounter ${activeEncounter.encounterId}. End the encounter first.`,
     };
   }
 

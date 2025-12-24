@@ -4,7 +4,7 @@
  */
 
 import { z } from 'zod';
-import { PositionSchema, SizeSchema, LightSchema, AoeShapeSchema, Position } from '../types.js';
+import { PositionSchema, SizeSchema, LightSchema, AoeShapeSchema, ObstacleTypeSchema, SenseSchema, PropTypeSchema, MovementModeSchema, DistanceModeSchema, Position, Cover, ObstacleType, Sense, PropType, MovementMode, DistanceMode } from '../types.js';
 import { fuzzyEnum } from '../fuzzy-enum.js';
 import { createBox, centerText, drawPath, BOX } from './ascii-art.js';
 import { getEncounterParticipant, getEncounterState } from './combat.js';
@@ -17,7 +17,7 @@ export const measureDistanceSchema = z.object({
   encounterId: z.string().optional(),
   from: z.union([z.string(), PositionSchema]),
   to: z.union([z.string(), PositionSchema]),
-  mode: fuzzyEnum(['euclidean', 'grid_5e', 'grid_alt'] as const).default('euclidean'),
+  mode: DistanceModeSchema.default('euclidean'),
   includeElevation: z.boolean().default(true),
 });
 
@@ -610,16 +610,7 @@ function calculateCylinderTiles(
 // CHECK LINE OF SIGHT
 // ============================================================
 
-/**
- * Obstacle types for line of sight calculations
- */
-const ObstacleTypeSchema = fuzzyEnum([
-  'wall',
-  'pillar',
-  'half_cover',
-  'three_quarters_cover',
-  'total_cover',
-]);
+// ObstacleTypeSchema now imported from types.ts
 
 /**
  * Obstacle schema for line of sight
@@ -648,10 +639,7 @@ const CreatureBlockSchema = z.object({
   size: CreatureSizeSchema,
 });
 
-/**
- * Special senses
- */
-const SenseSchema = fuzzyEnum(['blindsight', 'darkvision', 'tremorsense', 'truesight'] as const);
+// SenseSchema now imported from types.ts
 
 /**
  * Schema for check_line_of_sight
@@ -709,36 +697,69 @@ const COVER_BONUSES = {
 } as const;
 
 /**
- * Cover level type
+ * Cover level type - maps to Cover from types.ts but allows 'total' for internal use
  */
 type CoverLevel = 'none' | 'half' | 'three_quarters' | 'total';
 
 /**
- * Calculate cover from an obstacle based on its position relative to the line of sight.
+ * Get the numerical bonus for a cover level.
+ * Used for both AC and DEX save bonuses per D&D 5e rules.
  *
- * @param from - Starting position of the line of sight
- * @param to - Ending position of the line of sight
- * @param obstacle - Obstacle to check
- * @returns Cover level provided by the obstacle
+ * @param cover - The cover level ('none', 'half', 'three_quarters', 'full', or 'total')
+ * @returns The numerical bonus (0, 2, or 5)
+ */
+export function getCoverBonus(cover: string): number {
+  switch (cover) {
+    case 'half':
+      return COVER_BONUSES.half;
+    case 'three_quarters':
+      return COVER_BONUSES.three_quarters;
+    case 'total':
+    case 'full':
+      return Infinity; // Target can't be directly targeted
+    default:
+      return 0;
+  }
+}
+
+// ============================================================
+// COVER CALCULATION HELPERS (SPAT-03)
+// ============================================================
+
+/**
+ * Calculate cover provided by a single obstacle based on its position relative to the line of sight.
+ * Uses D&D 5e cover rules to determine if and what level of cover an obstacle provides.
+ *
+ * @param obstacle - The obstacle prop to check (can be Prop or inline obstacle object)
+ * @param attacker - Position of the attacker
+ * @param target - Position of the target
+ * @returns Cover level provided by the obstacle, or null if obstacle doesn't provide cover
  */
 function calculateCoverFromObstacle(
-  from: Position,
-  to: Position,
-  obstacle: { x: number; y: number; z: number; type: string; height?: number }
+  obstacle: { x: number; y: number; z?: number; type: string; height?: number; cover?: Cover },
+  attacker: Position,
+  target: Position
 ): CoverLevel | null {
-  // Check if obstacle is on the line
-  if (!isOnLine(from, to, obstacle)) {
+  // Get obstacle position (support both Prop and inline obstacle formats)
+  const obstaclePos: Position = {
+    x: obstacle.x,
+    y: obstacle.y,
+    z: obstacle.z ?? 0,
+  };
+
+  // Check if obstacle is on the line between attacker and target
+  if (!isOnLine(attacker, target, obstaclePos)) {
     return null;
   }
 
-  // Check height if specified
+  // Check height if specified (for shooting over obstacles)
   if (obstacle.height !== undefined) {
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    const dz = (to.z ?? 0) - (from.z ?? 0);
+    const dx = target.x - attacker.x;
+    const dy = target.y - attacker.y;
+    const dz = (target.z ?? 0) - (attacker.z ?? 0);
 
-    const t = getLineParameter(from, to, obstacle);
-    const lineZ = (from.z ?? 0) + t * dz;
+    const t = getLineParameter(attacker, target, obstaclePos);
+    const lineZ = (attacker.z ?? 0) + t * dz;
 
     // If line passes over the obstacle, it doesn't block
     if (lineZ > obstacle.height / 5) {
@@ -746,26 +767,45 @@ function calculateCoverFromObstacle(
     }
   }
 
-  // Determine cover level from obstacle type
+  // If obstacle has explicit cover property (Prop type), use it
+  if (obstacle.cover !== undefined) {
+    return mapCoverToCoverLevel(obstacle.cover);
+  }
+
+  // Otherwise determine cover level from obstacle type
   return getObstacleCover(obstacle.type);
 }
 
 /**
- * Determine the highest cover level from a list of possible cover levels.
- * Uses D&D 5e cover rules:
- * - Half cover: +2 AC and Dex saves (target is behind low wall, furniture, or other creatures)
- * - Three-quarters cover: +5 AC and Dex saves (target is behind portcullis, arrow slit, or thick tree trunk)
- * - Total cover: Cannot be targeted directly (target is completely concealed)
+ * Determine the highest cover level from comparing two cover levels.
+ * Uses D&D 5e cover hierarchy: none < half < three_quarters < total
  *
- * @param coverLevel - Current cover level
- * @param newCoverLevel - New cover level to compare
+ * This function ensures that when multiple obstacles provide cover,
+ * the highest (most protective) cover level is used.
+ *
+ * @param currentCover - Current highest cover level
+ * @param newCover - New cover level to compare
  * @returns The higher of the two cover levels
  */
-function determineCoverLevel(coverLevel: CoverLevel, newCoverLevel: CoverLevel): CoverLevel {
-  if (compareCover(newCoverLevel, coverLevel) > 0) {
-    return newCoverLevel;
+function determineCoverLevel(currentCover: CoverLevel, newCover: CoverLevel): CoverLevel {
+  if (compareCover(newCover, currentCover) > 0) {
+    return newCover;
   }
-  return coverLevel;
+  return currentCover;
+}
+
+/**
+ * Map Cover type from types.ts to internal CoverLevel type.
+ * 'full' cover from types.ts maps to 'total' cover for internal use.
+ *
+ * @param cover - Cover value from Prop
+ * @returns Corresponding CoverLevel
+ */
+function mapCoverToCoverLevel(cover: Cover): CoverLevel {
+  if (cover === 'full') {
+    return 'total';
+  }
+  return cover as CoverLevel;
 }
 
 /**
@@ -861,7 +901,7 @@ export function checkLineOfSight(input: CheckLineOfSightInput): string {
 
   // Check static obstacles
   for (const obstacle of allObstacles) {
-    const obstacleCover = calculateCoverFromObstacle(fromPos, toPos, obstacle);
+    const obstacleCover = calculateCoverFromObstacle(obstacle, fromPos, toPos);
     if (obstacleCover !== null) {
       coverLevel = determineCoverLevel(coverLevel, obstacleCover);
       if (obstacleCover !== 'none') {
@@ -1174,7 +1214,7 @@ export function checkCover(input: CheckCoverInput): string {
       continue;
     }
 
-    const obstacleCover = calculateCoverFromObstacle(attackerPos, targetPos, obstacle);
+    const obstacleCover = calculateCoverFromObstacle(obstacle, attackerPos, targetPos);
     if (obstacleCover !== null) {
       coverLevel = determineCoverLevel(coverLevel, obstacleCover);
       if (obstacleCover !== 'none') {
@@ -1255,24 +1295,7 @@ export function checkCover(input: CheckCoverInput): string {
 // PLACE PROP
 // ============================================================
 
-/**
- * Prop types supported by the system
- */
-const PropTypeSchema = fuzzyEnum([
-  'barrel',
-  'crate',
-  'chest',
-  'door',
-  'lever',
-  'pillar',
-  'statue',
-  'table',
-  'chair',
-  'altar',
-  'trap',
-  'obstacle',
-  'custom',
-]);
+// PropTypeSchema now imported from types.ts
 
 /**
  * Cover types a prop can provide
@@ -1622,29 +1645,20 @@ export function placeProp(input: PlacePropInput): string {
 // ============================================================
 
 /**
- * Terrain movement cost constants based on D&D 5e rules.
- *
- * D&D 5e Movement Rules:
- * - Normal terrain: 1x movement cost (5 feet per square)
- * - Difficult terrain: 2x movement cost (10 feet per square)
- *   Examples: rubble, undergrowth, steep stairs, snow, shallow bogs
- * - Water (swimming): 2x movement cost unless creature has swim speed
- * - Obstacles: Impassable (infinite cost)
- *   Examples: walls, solid objects, cliffs without climbing
- *
- * Reference: Player's Handbook, Chapter 9: Combat, "Difficult Terrain"
+ * Movement costs per terrain type (D&D 5e rules).
+ * Normal = 1 ft per 1 ft, Difficult = 2 ft per 1 ft, Obstacle = Impassable
  */
 const TERRAIN_COSTS: Record<string, number> = {
   normal: 1,
   difficultTerrain: 2,
   water: 2,
-  obstacle: Infinity,
+  mud: 2,
+  ice: 2,
+  sand: 2,
+  obstacle: Infinity
 } as const;
 
-/**
- * Movement calculation modes
- */
-const MovementModeSchema = fuzzyEnum(['path', 'reach', 'adjacent'] as const);
+// MovementModeSchema now imported from types.ts
 
 /**
  * Position schema for movement (optional z)

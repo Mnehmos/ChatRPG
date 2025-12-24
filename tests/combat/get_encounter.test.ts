@@ -459,7 +459,7 @@ describe('get_encounter', () => {
           maxHp: 10 + i,
           ac: 10 + i,
           initiativeBonus: i,
-          position: { x: i * 5, y: 0, z: 0 },
+          position: { x: (i - 1) * 4, y: 0, z: 0 }, // Stay within 50x50 grid (0-36)
         });
       }
       

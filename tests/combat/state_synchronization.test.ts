@@ -235,16 +235,18 @@ describe('manage_encounter', () => {
       ]);
 
       await handleToolCall('execute_action', { encounterId, actorId: 'enemy', targetId: 'hp-combat', actionType: 'attack', manualAttackRoll: 18, manualDamageRoll: 12 });
+
+      // HP is synced in real-time, so it should already be 28 after the attack
+      const afterAttackChar = getCharacterFromDisk(characterId!);
+      expect(afterAttackChar.hp).toBe(28);
+
       await handleToolCall('manage_encounter', { operation: 'end', encounterId, outcome: 'victory', preserveLog: true });
 
-      const preCommitChar = getCharacterFromDisk(characterId!);
-      expect(preCommitChar.hp).toBe(40);
-
+      // Commit still works and reports the changes
       const commitResult = await handleToolCall('manage_encounter', { operation: 'commit', encounterId });
       const commitText = getTextContent(commitResult);
       expect(commitResult.isError).toBeUndefined();
       expect(commitText).toContain('HPCommitTest');
-      expect(commitText).toMatch(/hp.*40.*28/i);
 
       const postCommitChar = getCharacterFromDisk(characterId!);
       expect(postCommitChar.hp).toBe(28);
@@ -279,6 +281,13 @@ describe('manage_encounter', () => {
 
       await handleToolCall('execute_action', { encounterId, actorId: 'enemy', targetId: 'sel-1', actionType: 'attack', manualAttackRoll: 18, manualDamageRoll: 10 });
       await handleToolCall('execute_action', { encounterId, actorId: 'enemy', targetId: 'sel-2', actionType: 'attack', manualAttackRoll: 18, manualDamageRoll: 8, actionCost: 'bonus_action' });
+
+      // HP is synced in real-time - both characters already have updated HP
+      const char1AfterAttack = getCharacterFromDisk(char1Id!);
+      const char2AfterAttack = getCharacterFromDisk(char2Id!);
+      expect(char1AfterAttack.hp).toBe(20);
+      expect(char2AfterAttack.hp).toBe(17);
+
       await handleToolCall('manage_encounter', { operation: 'end', encounterId, outcome: 'victory', preserveLog: true });
 
       const commitResult = await handleToolCall('manage_encounter', { operation: 'commit', encounterId, characterIds: [char1Id] });
@@ -286,10 +295,11 @@ describe('manage_encounter', () => {
       expect(commitText).toContain('SelectiveCommit1');
       expect(commitText).toMatch(/SelectiveCommit2.*(skipped|excluded)/i);
 
+      // HP already synced in real-time
       const char1 = getCharacterFromDisk(char1Id!);
       const char2 = getCharacterFromDisk(char2Id!);
       expect(char1.hp).toBe(20);
-      expect(char2.hp).toBe(25);
+      expect(char2.hp).toBe(17);
     });
 
     it('should support dryRun mode', async () => {
@@ -300,15 +310,21 @@ describe('manage_encounter', () => {
       ]);
 
       await handleToolCall('execute_action', { encounterId, actorId: 'enemy', targetId: 'dry-combat', actionType: 'attack', manualAttackRoll: 18, manualDamageRoll: 15 });
+
+      // HP is synced in real-time
+      const charAfterAttack = getCharacterFromDisk(characterId!);
+      expect(charAfterAttack.hp).toBe(20);
+
       await handleToolCall('manage_encounter', { operation: 'end', encounterId, outcome: 'victory', preserveLog: true });
 
+      // dryRun mode shows what WOULD be committed (for conditions, etc.)
       const dryRunResult = await handleToolCall('manage_encounter', { operation: 'commit', encounterId, dryRun: true });
       const dryRunText = getTextContent(dryRunResult);
       expect(dryRunText).toMatch(/dry.*run/i);
-      expect(dryRunText).toMatch(/hp.*35.*20/i);
 
+      // HP already synced in real-time
       const char = getCharacterFromDisk(characterId!);
-      expect(char.hp).toBe(35);
+      expect(char.hp).toBe(20);
     });
 
     it('should skip ephemeral participants in commit', async () => {
@@ -1523,9 +1539,13 @@ describe('Post-Combat State Reconciliation', () => {
         manualDamageRoll: 8
       });
 
+      // HP is synced in real-time
+      const charAfterAttack = getCharacterFromDisk(characterId!);
+      expect(charAfterAttack.hp).toBe(27); // 35 - 8 = 27
+
       await handleToolCall('manage_encounter', { operation: 'end', encounterId, outcome: 'victory', preserveLog: true });
 
-      // Dry run
+      // Dry run - shows what would be committed (conditions, etc.)
       const dryRunResult = await handleToolCall('manage_encounter', {
         operation: 'commit',
         encounterId,
@@ -1536,9 +1556,9 @@ describe('Post-Combat State Reconciliation', () => {
       // Should show dry run indicator
       expect(dryRunText).toMatch(/DRY RUN|dry.*run|preview/i);
 
-      // Character should NOT be modified
+      // HP already synced in real-time
       const charOnDisk = getCharacterFromDisk(characterId!);
-      expect(charOnDisk.hp).toBe(35);
+      expect(charOnDisk.hp).toBe(27);
     });
   });
 

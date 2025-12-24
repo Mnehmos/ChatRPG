@@ -20,6 +20,8 @@ import {
   PositionSchema,
   RollModeSchema,
   type RollMode,
+  type ConcentrationState,
+  type AuraState,
 } from '../types.js';
 import { fuzzyEnum } from '../fuzzy-enum.js';
 
@@ -47,25 +49,14 @@ const D20_SIDES = 20;
 // ============================================================
 
 /**
- * Represents the concentration state for a single caster
+ * Result of a concentration check after taking damage.
+ * Discriminated union type for maintained vs broken concentration.
  */
-interface ConcentrationState {
-  /** The character ID of the concentrating caster */
-  characterId: string;
+type ConcentrationCheckResult =
+  | { maintained: true; roll: number; dc: number }
+  | { maintained: false; roll: number; dc: number; reason: string };
 
-  /** The name of the spell being concentrated on */
-  spellName: string;
-
-  /** Optional list of target character/creature IDs affected by the spell */
-  targets?: string[];
-
-  /** Optional remaining duration in rounds */
-  duration?: number;
-
-  /** Optional round number when concentration started */
-  startedAt?: number;
-}
-
+// ConcentrationState imported from ../types.js
 // RollMode imported from ../types.js
 
 // ============================================================
@@ -286,7 +277,7 @@ function handleSetConcentration(input: z.infer<typeof setOperationSchema>): stri
   const newState: ConcentrationState = {
     characterId,
     spellName,
-    targets,
+    targets: targets || [],
     duration,
   };
   concentrationStore.set(characterId, newState);
@@ -518,9 +509,10 @@ function resolveRoll(
 // ============================================================
 
 /**
- * Represents an active aura effect
+ * Extended aura state with additional mechanical properties.
+ * Extends the base AuraState from types.ts with game-specific fields.
  */
-interface AuraState {
+interface ExtendedAuraState {
   id: string;
   ownerId: string;
   spellName: string;
@@ -541,7 +533,7 @@ interface AuraState {
 /**
  * In-memory aura storage, keyed by aura ID.
  */
-const auraStore = new Map<string, AuraState>();
+const auraStore = new Map<string, ExtendedAuraState>();
 
 // ============================================================
 // AURA SCHEMAS
@@ -613,14 +605,14 @@ export type ManageAuraInput = z.infer<typeof manageAuraSchema>;
 /**
  * Get an aura by ID.
  */
-export function getAura(auraId: string): AuraState | undefined {
+export function getAura(auraId: string): ExtendedAuraState | undefined {
   return auraStore.get(auraId);
 }
 
 /**
  * Get all auras for an owner.
  */
-export function getAurasForOwner(ownerId: string): AuraState[] {
+export function getAurasForOwner(ownerId: string): ExtendedAuraState[] {
   return Array.from(auraStore.values()).filter(a => a.ownerId === ownerId);
 }
 
@@ -662,7 +654,7 @@ function handleCreateAura(input: z.infer<typeof createAuraSchema>): string {
   const id = `aura-${randomUUID().slice(0, 8)}`;
   const content: string[] = [];
 
-  const aura: AuraState = {
+  const aura: ExtendedAuraState = {
     id,
     ownerId: input.ownerId,
     spellName: input.spellName,
@@ -952,21 +944,30 @@ function rollDice(expression: string, manualRolls?: number[]): { total: number; 
 // ============================================================
 
 /**
- * Scroll statistics by spell level per DMG.
- * Index = spell level (0-9)
+ * Scroll statistics per spell level
  */
-const SCROLL_STATS: Array<{ saveDC: number; attackBonus: number }> = [
-  { saveDC: 13, attackBonus: 5 },  // Cantrip
-  { saveDC: 13, attackBonus: 5 },  // 1st
-  { saveDC: 13, attackBonus: 5 },  // 2nd
-  { saveDC: 15, attackBonus: 7 },  // 3rd
-  { saveDC: 15, attackBonus: 7 },  // 4th
-  { saveDC: 17, attackBonus: 9 },  // 5th
-  { saveDC: 17, attackBonus: 9 },  // 6th
-  { saveDC: 18, attackBonus: 10 }, // 7th
-  { saveDC: 18, attackBonus: 10 }, // 8th
-  { saveDC: 19, attackBonus: 11 }, // 9th
-];
+interface ScrollStats {
+  saveDC: number;
+  attackBonus: number;
+  rarity: string;
+}
+
+/**
+ * Scroll statistics by spell level per DMG.
+ * Keyed by spell level (0-9)
+ */
+const SCROLL_STATS: Record<number, ScrollStats> = {
+  0: { saveDC: 13, attackBonus: 5, rarity: 'Common' },
+  1: { saveDC: 13, attackBonus: 5, rarity: 'Common' },
+  2: { saveDC: 13, attackBonus: 5, rarity: 'Uncommon' },
+  3: { saveDC: 15, attackBonus: 7, rarity: 'Uncommon' },
+  4: { saveDC: 15, attackBonus: 7, rarity: 'Rare' },
+  5: { saveDC: 17, attackBonus: 9, rarity: 'Rare' },
+  6: { saveDC: 17, attackBonus: 9, rarity: 'Very Rare' },
+  7: { saveDC: 18, attackBonus: 10, rarity: 'Very Rare' },
+  8: { saveDC: 18, attackBonus: 10, rarity: 'Very Rare' },
+  9: { saveDC: 19, attackBonus: 11, rarity: 'Legendary' }
+};
 
 // PositionSchema imported from ../types.js
 
@@ -1250,6 +1251,37 @@ const MATERIAL_DC_THRESHOLDS = [
 const ENHANCED_MASTERY_THRESHOLD = 5;
 
 /**
+ * Calculates the Arcana check DC for spell synthesis.
+ * Base DC = 10 + (spell level * 2)
+ *
+ * @param level - Spell level (0-9)
+ * @param nearLeyLine - Proximity to ley line (-2 DC)
+ * @param materialComponentValue - Value of components in GP (reduces DC)
+ * @returns Object with final DC and modifier breakdown
+ */
+function calculateSynthesisDC(
+  level: number,
+  nearLeyLine?: boolean,
+  materialComponentValue?: number
+): { dc: number; modifiers: string[] } {
+  let dc = 10 + (level * 2);
+  const modifiers: string[] = [];
+
+  if (nearLeyLine) {
+    dc -= 2;
+    modifiers.push('Near ley line: -2');
+  }
+
+  if (materialComponentValue && materialComponentValue >= 100) {
+    const reduction = Math.floor(materialComponentValue / 100);
+    dc -= reduction;
+    modifiers.push(`Components (${materialComponentValue}gp): -${reduction}`);
+  }
+
+  return { dc, modifiers };
+}
+
+/**
  * Main handler for synthesize_spell.
  * Arcana check DC = 10 + (level × 2) + modifiers
  */
@@ -1269,25 +1301,12 @@ export function synthesizeSpell(input: SynthesizeSpellInput): string {
     materialComponentValue,
   } = input;
 
-  // Calculate base DC
-  let dc = 10 + (proposedSpell.level * 2);
-  const dcModifiers: string[] = [];
-
-  // Apply circumstance modifiers to DC
-  if (nearLeyLine) {
-    dc -= LEY_LINE_DC_REDUCTION;
-    dcModifiers.push(`ley line (-${LEY_LINE_DC_REDUCTION})`);
-  }
-
-  if (materialComponentValue !== undefined) {
-    for (const threshold of MATERIAL_DC_THRESHOLDS.slice().reverse()) {
-      if (materialComponentValue >= threshold.value) {
-        dc -= threshold.reduction;
-        dcModifiers.push(`${materialComponentValue}gp components (-${threshold.reduction})`);
-        break;
-      }
-    }
-  }
+  // Calculate DC using helper function
+  const { dc, modifiers: dcModifiers } = calculateSynthesisDC(
+    proposedSpell.level,
+    nearLeyLine,
+    materialComponentValue
+  );
 
   // Build header
   content.push(centerText('ARCANE SYNTHESIS', DISPLAY_WIDTH));

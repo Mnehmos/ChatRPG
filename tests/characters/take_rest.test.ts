@@ -468,4 +468,262 @@ describe('take_rest', () => {
       expect(text).toMatch(/interrupted|partial|warning/i);
     });
   });
+
+  /**
+   * Character Lookup Tests (CRITICAL-002)
+   *
+   * Bug: take_rest fails to find characters that exist and are active in encounters.
+   * Root cause: Data store isolation between Character and Combat modules.
+   * Characters created via create_character are stored in one place, but take_rest
+   * looks in a different/isolated store.
+   *
+   * These tests are designed to FAIL until the bug is fixed.
+   */
+  describe('Character Lookup (CRITICAL-002)', () => {
+    it('should find character by characterId immediately after creation', async () => {
+      // Create a fresh character
+      const createResult = await handleToolCall('create_character', {
+        name: 'Lookup Test Hero',
+        race: 'Human',
+        class: 'Fighter',
+        level: 3,
+        stats: { str: 16, dex: 14, con: 14, int: 10, wis: 12, cha: 10 },
+        hp: 15,
+        maxHp: 28,
+      });
+      
+      const createText = getTextContent(createResult);
+      const idMatch = createText.match(/ID:\s*([a-zA-Z0-9-]+)/i);
+      expect(idMatch).not.toBeNull();
+      const characterId = idMatch![1];
+      
+      // Verify character exists via get_character
+      const getResult = await handleToolCall('get_character', { characterId });
+      expect(getResult.isError).toBeUndefined();
+      const getCharText = getTextContent(getResult);
+      expect(getCharText).toContain('Lookup Test Hero');
+      
+      // NOW: take_rest should find the same character
+      // BUG: This fails with "Character not found" due to data store isolation
+      const restResult = await handleToolCall('take_rest', {
+        characterId,
+        restType: 'short',
+      });
+      
+      // Assert: take_rest should succeed (find the character)
+      expect(restResult.isError).toBeUndefined();
+      const restText = getTextContent(restResult);
+      expect(restText).toMatch(/short rest|rest completed/i);
+      expect(restText).toContain('Lookup Test Hero');
+    });
+
+    it('should find character by characterName immediately after creation', async () => {
+      // Create a fresh character with a unique name
+      const uniqueName = `Name Lookup Hero ${Date.now()}`;
+      const createResult = await handleToolCall('create_character', {
+        name: uniqueName,
+        race: 'Elf',
+        class: 'Wizard',
+        level: 5,
+        stats: { str: 8, dex: 14, con: 12, int: 18, wis: 14, cha: 10 },
+        hp: 18,
+        maxHp: 22,
+      });
+      
+      const createText = getTextContent(createResult);
+      expect(createText).toContain(uniqueName);
+      
+      // Verify character exists via get_character by name
+      const getResult = await handleToolCall('get_character', { characterName: uniqueName });
+      expect(getResult.isError).toBeUndefined();
+      
+      // NOW: take_rest should find the same character by name
+      // BUG: This fails with "Character not found" due to data store isolation
+      const restResult = await handleToolCall('take_rest', {
+        characterName: uniqueName,
+        restType: 'long',
+      });
+      
+      // Assert: take_rest should succeed (find the character by name)
+      expect(restResult.isError).toBeUndefined();
+      const restText = getTextContent(restResult);
+      expect(restText).toMatch(/long rest|rest completed/i);
+      expect(restText).toContain(uniqueName);
+    });
+
+    it('should block rest during active combat', async () => {
+      // Create a persistent character first
+      const createResult = await handleToolCall('create_character', {
+        name: 'Encounter Lookup Hero',
+        race: 'Dwarf',
+        class: 'Cleric',
+        level: 4,
+        stats: { str: 14, dex: 10, con: 16, int: 10, wis: 16, cha: 12 },
+        hp: 25,
+        maxHp: 36,
+      });
+
+      const createText = getTextContent(createResult);
+      const idMatch = createText.match(/ID:\s*([a-zA-Z0-9-]+)/i);
+      expect(idMatch).not.toBeNull();
+      const characterId = idMatch![1];
+
+      // Add character to an encounter (simulates combat usage)
+      const encounterResult = await handleToolCall('create_encounter', {
+        participants: [
+          {
+            id: 'encounter-hero',
+            characterId, // Links to persistent character
+            name: 'Encounter Lookup Hero',
+            hp: 25,
+            maxHp: 36,
+            ac: 18,
+            initiativeBonus: 0,
+            position: { x: 5, y: 5 },
+          },
+          {
+            id: 'goblin-1',
+            name: 'Goblin',
+            hp: 7,
+            maxHp: 7,
+            ac: 13,
+            initiativeBonus: 2,
+            position: { x: 10, y: 10 },
+            isEnemy: true,
+          },
+        ],
+      });
+
+      const encounterText = getTextContent(encounterResult);
+      expect(encounterResult.isError).toBeUndefined();
+
+      // Extract encounter ID
+      const encIdMatch = encounterText.match(/Encounter ID:\s*([a-zA-Z0-9-]+)/i) ||
+                         encounterText.match(/ID:\s*([a-zA-Z0-9-]+)/i);
+      const encounterId = encIdMatch ? encIdMatch[1] : '';
+
+      // Attempt to rest during combat - should be BLOCKED
+      const restResult = await handleToolCall('take_rest', {
+        characterId,
+        restType: 'short',
+        hitDiceToSpend: 1,
+      });
+
+      // Assert: take_rest should FAIL during active combat
+      expect(restResult.isError).toBe(true);
+      const restText = getTextContent(restResult);
+      expect(restText).toMatch(/cannot rest during combat|in encounter/i);
+
+      // End the encounter
+      await handleToolCall('end_encounter', {
+        encounterId,
+        outcome: 'victory',
+      });
+
+      // Now rest should succeed
+      const restAfterCombat = await handleToolCall('take_rest', {
+        characterId,
+        restType: 'short',
+        hitDiceToSpend: 1,
+      });
+      expect(restAfterCombat.isError).toBeUndefined();
+      const restAfterText = getTextContent(restAfterCombat);
+      expect(restAfterText).toMatch(/short rest|rest completed/i);
+    });
+
+    it('should return clear error for truly non-existent character', async () => {
+      // Call take_rest with a fake ID that never existed
+      const fakeId = 'char_nonexistent_12345_fake';
+      
+      const restResult = await handleToolCall('take_rest', {
+        characterId: fakeId,
+        restType: 'short',
+      });
+      
+      // Assert: Should return an error (not crash)
+      expect(restResult.isError).toBe(true);
+      
+      const errorText = getTextContent(restResult);
+      // Error message should clearly indicate the character was not found
+      expect(errorText).toMatch(/not found|does not exist|invalid character/i);
+      // Error should include the ID that was searched for (helpful debugging)
+      expect(errorText).toContain(fakeId);
+    });
+
+    it('should find character by characterName after encounter ends', async () => {
+      // Create a character with a unique name
+      const uniqueName = `Post-Combat Rester ${Date.now()}`;
+      const createResult = await handleToolCall('create_character', {
+        name: uniqueName,
+        race: 'Halfling',
+        class: 'Rogue',
+        level: 6,
+        stats: { str: 10, dex: 18, con: 12, int: 14, wis: 12, cha: 14 },
+        hp: 30,
+        maxHp: 42,
+      });
+
+      const createText = getTextContent(createResult);
+      const idMatch = createText.match(/ID:\s*([a-zA-Z0-9-]+)/i);
+      expect(idMatch).not.toBeNull();
+      const characterId = idMatch![1];
+
+      // Add to encounter
+      const encounterResult = await handleToolCall('create_encounter', {
+        seed: 'lookup-test-seed',
+        participants: [
+          {
+            id: 'rogue-hero',
+            characterId,
+            name: uniqueName,
+            hp: 30,
+            maxHp: 42,
+            ac: 16,
+            initiativeBonus: 4,
+            position: { x: 0, y: 0 },
+          },
+          {
+            id: 'orc-1',
+            name: 'Orc',
+            hp: 15,
+            maxHp: 15,
+            ac: 13,
+            initiativeBonus: 1,
+            position: { x: 5, y: 0 },
+            isEnemy: true,
+          },
+        ],
+      });
+
+      const encounterText = getTextContent(encounterResult);
+      const encIdMatch = encounterText.match(/Encounter ID:\s*([a-zA-Z0-9-]+)/i) ||
+                         encounterText.match(/ID:\s*([a-zA-Z0-9-]+)/i);
+      const encounterId = encIdMatch ? encIdMatch[1] : '';
+
+      // Rest should be blocked during combat
+      const restDuringCombat = await handleToolCall('take_rest', {
+        characterName: uniqueName,
+        restType: 'long',
+      });
+      expect(restDuringCombat.isError).toBe(true);
+
+      // End the encounter
+      await handleToolCall('end_encounter', {
+        encounterId,
+        outcome: 'victory',
+      });
+
+      // NOW: take_rest by NAME should work after combat ends
+      const restResult = await handleToolCall('take_rest', {
+        characterName: uniqueName,
+        restType: 'long',
+      });
+
+      // Assert: take_rest should succeed using characterName after combat
+      expect(restResult.isError).toBeUndefined();
+      const restText = getTextContent(restResult);
+      expect(restText).toMatch(/long rest|rest completed/i);
+      expect(restText).toContain(uniqueName);
+    });
+  });
 });

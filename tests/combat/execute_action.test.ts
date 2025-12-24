@@ -797,4 +797,515 @@ describe('execute_action', () => {
       expect(fighterAfter).toBeDefined();
     });
   });
+
+  // ============================================================
+  // SPELLCASTING ACTION TESTS (CRITICAL-003)
+  // Bug: cast/cast_spell action type interpreted as dash
+  // ============================================================
+
+  describe('Spellcasting Action (CRITICAL-003)', () => {
+    // Create a wizard encounter for spellcasting tests
+    function createWizardEncounter() {
+      const result = createEncounter({
+        participants: [
+          {
+            id: 'wizard-1',
+            name: 'Gandalf',
+            hp: 32,
+            maxHp: 32,
+            ac: 12,
+            initiativeBonus: 2,
+            position: { x: 0, y: 0 },
+            isEnemy: false,
+            speed: 30,
+          },
+          {
+            id: 'goblin-1',
+            name: 'Goblin',
+            hp: 7,
+            maxHp: 7,
+            ac: 13,
+            initiativeBonus: 2,
+            position: { x: 5, y: 0 }, // 25ft away - within spell range
+            isEnemy: true,
+            speed: 30,
+          },
+          {
+            id: 'goblin-2',
+            name: 'Goblin Archer',
+            hp: 7,
+            maxHp: 7,
+            ac: 12,
+            initiativeBonus: 1,
+            position: { x: 6, y: 0 }, // Adjacent to goblin-1 for AOE tests
+            isEnemy: true,
+            speed: 30,
+          },
+        ],
+        terrain: { width: 30, height: 30 },
+        lighting: 'bright',
+      });
+
+      const idMatch = result.match(/Encounter ID: ([a-zA-Z0-9-]+)/);
+      return idMatch ? idMatch[1] : '';
+    }
+
+    it('should cast spell with actionType "cast_spell" and NOT interpret as dash', async () => {
+      const encounterId = createWizardEncounter();
+
+      const result = await handleToolCall('execute_action', {
+        encounterId,
+        actorId: 'wizard-1',
+        actionType: 'cast_spell',
+        spellName: 'Fire Bolt',
+        targetId: 'goblin-1',
+      });
+
+      const text = getTextContent(result);
+      
+      // CRITICAL-003: Should NOT be interpreted as dash
+      expect(text).not.toMatch(/dash/i);
+      
+      // Should show spell casting output
+      expect(text).toMatch(/fire bolt|spell|cast/i);
+      
+      // Wizard should NOT have moved (dash would enable double movement)
+      const wizard = getEncounterParticipant(encounterId, 'wizard-1');
+      expect(wizard!.position.x).toBe(0);
+      expect(wizard!.position.y).toBe(0);
+    });
+
+    it('should cast spell with actionType "cast" and NOT interpret as dash', async () => {
+      const encounterId = createWizardEncounter();
+
+      const result = await handleToolCall('execute_action', {
+        encounterId,
+        actorId: 'wizard-1',
+        actionType: 'cast',
+        spellName: 'Fire Bolt',
+        targetId: 'goblin-1',
+      });
+
+      const text = getTextContent(result);
+      
+      // CRITICAL-003: Should NOT be interpreted as dash
+      expect(text).not.toMatch(/dash/i);
+      
+      // Should show spell casting output, not movement
+      expect(text).toMatch(/fire bolt|spell|cast/i);
+      
+      // Wizard position should remain unchanged
+      const wizard = getEncounterParticipant(encounterId, 'wizard-1');
+      expect(wizard!.position.x).toBe(0);
+      expect(wizard!.position.y).toBe(0);
+    });
+
+    it('should deal damage when casting damaging spells', async () => {
+      const encounterId = createWizardEncounter();
+
+      // Get goblin HP before spell
+      const goblinBefore = getEncounterParticipant(encounterId, 'goblin-1');
+      const hpBefore = goblinBefore!.hp;
+
+      // Cast Fire Bolt with manual attack roll to guarantee hit
+      const result = await handleToolCall('execute_action', {
+        encounterId,
+        actorId: 'wizard-1',
+        actionType: 'cast_spell',
+        spellName: 'Fire Bolt',
+        targetId: 'goblin-1',
+        manualAttackRoll: 20, // Guarantee hit
+        spellDamage: '1d10',
+        spellDamageType: 'fire',
+      });
+
+      const text = getTextContent(result);
+      
+      // Should show damage dealt
+      expect(text).toMatch(/damage|hit|fire/i);
+      
+      // Goblin should have taken damage
+      const goblinAfter = getEncounterParticipant(encounterId, 'goblin-1');
+      expect(goblinAfter!.hp).toBeLessThan(hpBefore);
+    });
+
+    it('should expend spell slot when casting leveled spell', async () => {
+      const encounterId = createWizardEncounter();
+
+      // Cast Magic Missile (1st level spell)
+      const result = await handleToolCall('execute_action', {
+        encounterId,
+        actorId: 'wizard-1',
+        actionType: 'cast_spell',
+        spellName: 'Magic Missile',
+        spellSlot: 1,
+        targetId: 'goblin-1',
+        spellDamage: '3d4+3', // 3 darts
+        spellDamageType: 'force',
+      });
+
+      const text = getTextContent(result);
+      
+      // Should NOT be dash
+      expect(text).not.toMatch(/dash/i);
+      
+      // Should mention spell slot expenditure or magic missile
+      expect(text).toMatch(/magic missile|spell|slot|level 1/i);
+      
+      // Should deal force damage (Magic Missile auto-hits)
+      expect(text).toMatch(/damage|force|missile/i);
+    });
+
+    it('should handle AOE spells like Fireball', async () => {
+      const encounterId = createWizardEncounter();
+
+      // Get HP of both goblins before Fireball
+      const goblin1Before = getEncounterParticipant(encounterId, 'goblin-1');
+      const goblin2Before = getEncounterParticipant(encounterId, 'goblin-2');
+
+      // Cast Fireball centered between the goblins
+      const result = await handleToolCall('execute_action', {
+        encounterId,
+        actorId: 'wizard-1',
+        actionType: 'cast_spell',
+        spellName: 'Fireball',
+        spellSlot: 3,
+        aoeCenter: { x: 5, y: 0 }, // Center near goblin-1
+        aoeRadius: 20, // 20ft radius
+        aoeShape: 'sphere',
+        spellDamage: '8d6',
+        spellDamageType: 'fire',
+        saveDC: 15,
+        saveAbility: 'dex',
+        halfOnSave: true,
+      });
+
+      const text = getTextContent(result);
+      
+      // CRITICAL-003: Should NOT be interpreted as dash
+      expect(text).not.toMatch(/dash/i);
+      
+      // Should show Fireball cast
+      expect(text).toMatch(/fireball|fire|explosion|area/i);
+    });
+
+    it('should recognize spell action types distinctly from dash', async () => {
+      const encounterId = createWizardEncounter();
+
+      // First cast a spell
+      const spellResult = await handleToolCall('execute_action', {
+        encounterId,
+        actorId: 'wizard-1',
+        actionType: 'cast_spell',
+        spellName: 'Ray of Frost',
+        targetId: 'goblin-1',
+        spellDamage: '1d8',
+        spellDamageType: 'cold',
+      });
+
+      const spellText = getTextContent(spellResult);
+
+      // Now explicitly dash to compare
+      const dashResult = await handleToolCall('execute_action', {
+        encounterId,
+        actorId: 'wizard-1',
+        actionType: 'dash',
+      });
+
+      const dashText = getTextContent(dashResult);
+
+      // Spell output should NOT contain dash indicators
+      expect(spellText).not.toMatch(/dash|double.*movement|60.*ft/i);
+      
+      // Dash output SHOULD contain dash indicators
+      expect(dashText).toMatch(/dash|movement/i);
+      
+      // The two outputs should be distinctly different
+      expect(spellText).not.toBe(dashText);
+    });
+
+    it('should error when casting without spellName', async () => {
+      const encounterId = createWizardEncounter();
+
+      const result = await handleToolCall('execute_action', {
+        encounterId,
+        actorId: 'wizard-1',
+        actionType: 'cast_spell',
+        targetId: 'goblin-1',
+        // Missing spellName
+      });
+
+      // Should error because no spell specified
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  describe('Spell Range Validation (HIGH-001)', () => {
+    it('should allow spell when target is within range', async () => {
+      // Create encounter with wizard and nearby goblin
+      const encResult = createEncounter({
+        participants: [
+          { id: 'wizard-1', name: 'Gandalf', hp: 30, maxHp: 30, ac: 12, initiativeBonus: 2, position: { x: 0, y: 0 }, speed: 30 },
+          { id: 'goblin-1', name: 'Goblin', hp: 7, maxHp: 7, ac: 13, initiativeBonus: 1, position: { x: 4, y: 0 }, isEnemy: true, speed: 30 },
+        ],
+        terrain: { width: 50, height: 50 },
+      });
+      const encounterId = encResult.match(/Encounter ID:\s*([a-zA-Z0-9-]+)/i)?.[1] || '';
+
+      // Fire Bolt has 120 ft range, target is 4 squares (20 ft) away
+      const result = await handleToolCall('execute_action', {
+        encounterId,
+        actorId: 'wizard-1',
+        actionType: 'cast_spell',
+        targetId: 'goblin-1',
+        spellName: 'Fire Bolt',
+        spellSlot: 0, // Cantrip
+        spellDamage: '1d10',
+        spellDamageType: 'fire',
+        spellRange: 120, // 120 ft range
+        manualAttackRoll: 18,
+        manualDamageRoll: 6,
+      });
+
+      // Should succeed - target is within range
+      expect(result.isError).toBeUndefined();
+      const text = getTextContent(result);
+      expect(text).toMatch(/fire bolt|damage/i);
+    });
+
+    it('should reject spell when target is out of range', async () => {
+      // Create encounter with wizard and distant goblin
+      const encResult = createEncounter({
+        participants: [
+          { id: 'wizard-1', name: 'Gandalf', hp: 30, maxHp: 30, ac: 12, initiativeBonus: 2, position: { x: 0, y: 0 }, speed: 30 },
+          { id: 'goblin-1', name: 'Goblin', hp: 7, maxHp: 7, ac: 13, initiativeBonus: 1, position: { x: 30, y: 0 }, isEnemy: true, speed: 30 },
+        ],
+        terrain: { width: 50, height: 50 },
+      });
+      const encounterId = encResult.match(/Encounter ID:\s*([a-zA-Z0-9-]+)/i)?.[1] || '';
+
+      // Shocking Grasp has 5 ft range (touch), target is 30 squares (150 ft) away
+      const result = await handleToolCall('execute_action', {
+        encounterId,
+        actorId: 'wizard-1',
+        actionType: 'cast_spell',
+        targetId: 'goblin-1',
+        spellName: 'Shocking Grasp',
+        spellSlot: 0, // Cantrip
+        spellDamage: '1d8',
+        spellDamageType: 'lightning',
+        spellRange: 5, // Touch spell - 5 ft range
+      });
+
+      // Should fail - target is out of range
+      expect(result.isError).toBe(true);
+      const text = getTextContent(result);
+      expect(text).toMatch(/out of range/i);
+      expect(text).toMatch(/distance.*150.*ft|150.*ft.*distance/i);
+    });
+
+    it('should skip range validation when spellRange is not provided', async () => {
+      // Create encounter
+      const encResult = createEncounter({
+        participants: [
+          { id: 'wizard-1', name: 'Gandalf', hp: 30, maxHp: 30, ac: 12, initiativeBonus: 2, position: { x: 0, y: 0 }, speed: 30 },
+          { id: 'goblin-1', name: 'Goblin', hp: 7, maxHp: 7, ac: 13, initiativeBonus: 1, position: { x: 40, y: 0 }, isEnemy: true, speed: 30 },
+        ],
+        terrain: { width: 50, height: 50 },
+      });
+      const encounterId = encResult.match(/Encounter ID:\s*([a-zA-Z0-9-]+)/i)?.[1] || '';
+
+      // Cast spell without spellRange - should not validate range (LLM responsibility)
+      const result = await handleToolCall('execute_action', {
+        encounterId,
+        actorId: 'wizard-1',
+        actionType: 'cast_spell',
+        targetId: 'goblin-1',
+        spellName: 'Magic Missile',
+        spellSlot: 1,
+        // No spellRange - skip validation
+      });
+
+      // Should succeed (no range validation)
+      expect(result.isError).toBeUndefined();
+    });
+  });
+
+  describe('HIGH-002: Cover bonus to DEX saves', () => {
+    it('should apply cover bonus to DEX saves for AoE spells', async () => {
+      // Create an encounter with a target that has half cover
+      const createResult = await handleToolCall('manage_encounter', {
+        operation: 'create',
+        participants: [
+          {
+            id: 'wizard-1',
+            name: 'Caster',
+            hp: 30,
+            maxHp: 30,
+            ac: 12,
+            initiativeBonus: 2,
+            position: { x: 0, y: 0 },
+            isEnemy: false,
+            speed: 30,
+          },
+          {
+            id: 'goblin-cover',
+            name: 'Goblin Behind Cover',
+            hp: 30, // Extra HP so they survive
+            maxHp: 30,
+            ac: 13,
+            initiativeBonus: 2,
+            position: { x: 5, y: 5 },
+            isEnemy: true,
+            speed: 30,
+            cover: 'half', // Half cover provides +2 to DEX saves
+          },
+        ],
+        terrain: { width: 20, height: 20 },
+      });
+
+      const createText = getTextContent(createResult);
+      const matchResult = createText.match(/Encounter ID:\s*([a-zA-Z0-9-]+)/i);
+      expect(matchResult).not.toBeNull();
+      const encounterId = matchResult![1];
+
+      // Cast a fireball (AoE DEX save spell)
+      const result = await handleToolCall('execute_action', {
+        encounterId,
+        actorId: 'wizard-1',
+        actionType: 'cast_spell',
+        spellName: 'Fireball',
+        spellSlot: 3,
+        aoeShape: 'sphere',
+        aoeRadius: 20,
+        aoeCenter: { x: 5, y: 5 },
+        spellDamage: '8d6',
+        spellDamageType: 'fire',
+        saveDC: 14,
+        saveAbility: 'dex',
+        halfOnSave: true,
+      });
+
+      expect(result.isError).toBeUndefined();
+      const text = getTextContent(result);
+
+      // The output should show (cover) in the save breakdown if cover was applied
+      expect(text).toContain('Goblin Behind Cover');
+      expect(text).toMatch(/\+2\(cover\)/); // Half cover gives +2
+    });
+
+    it('should show three-quarters cover bonus in DEX saves', async () => {
+      const createResult = await handleToolCall('manage_encounter', {
+        operation: 'create',
+        participants: [
+          {
+            id: 'wizard-1',
+            name: 'Caster',
+            hp: 30,
+            maxHp: 30,
+            ac: 12,
+            initiativeBonus: 2,
+            position: { x: 0, y: 0 },
+            isEnemy: false,
+            speed: 30,
+          },
+          {
+            id: 'goblin-fortified',
+            name: 'Fortified Goblin',
+            hp: 30,
+            maxHp: 30,
+            ac: 13,
+            initiativeBonus: 2,
+            position: { x: 5, y: 5 },
+            isEnemy: true,
+            speed: 30,
+            cover: 'three_quarters', // 3/4 cover provides +5 to DEX saves
+          },
+        ],
+        terrain: { width: 20, height: 20 },
+      });
+
+      const createText = getTextContent(createResult);
+      const matchResult = createText.match(/Encounter ID:\s*([a-zA-Z0-9-]+)/i);
+      const encounterId = matchResult![1];
+
+      const result = await handleToolCall('execute_action', {
+        encounterId,
+        actorId: 'wizard-1',
+        actionType: 'cast_spell',
+        spellName: 'Fireball',
+        spellSlot: 3,
+        aoeShape: 'sphere',
+        aoeRadius: 20,
+        aoeCenter: { x: 5, y: 5 },
+        spellDamage: '8d6',
+        spellDamageType: 'fire',
+        saveDC: 14,
+        saveAbility: 'dex',
+        halfOnSave: true,
+      });
+
+      expect(result.isError).toBeUndefined();
+      const text = getTextContent(result);
+      expect(text).toMatch(/\+5\(cover\)/); // Three-quarters cover gives +5
+    });
+
+    it('should NOT apply cover bonus to non-DEX saves', async () => {
+      const createResult = await handleToolCall('manage_encounter', {
+        operation: 'create',
+        participants: [
+          {
+            id: 'wizard-1',
+            name: 'Caster',
+            hp: 30,
+            maxHp: 30,
+            ac: 12,
+            initiativeBonus: 2,
+            position: { x: 0, y: 0 },
+            isEnemy: false,
+            speed: 30,
+          },
+          {
+            id: 'goblin-cover',
+            name: 'Covered Goblin',
+            hp: 30,
+            maxHp: 30,
+            ac: 13,
+            initiativeBonus: 2,
+            position: { x: 5, y: 5 },
+            isEnemy: true,
+            speed: 30,
+            cover: 'half',
+          },
+        ],
+        terrain: { width: 20, height: 20 },
+      });
+
+      const createText = getTextContent(createResult);
+      const matchResult = createText.match(/Encounter ID:\s*([a-zA-Z0-9-]+)/i);
+      const encounterId = matchResult![1];
+
+      // Cast a CON save spell (cover doesn't help)
+      const result = await handleToolCall('execute_action', {
+        encounterId,
+        actorId: 'wizard-1',
+        actionType: 'cast_spell',
+        spellName: 'Cloudkill',
+        spellSlot: 5,
+        aoeShape: 'sphere',
+        aoeRadius: 20,
+        aoeCenter: { x: 5, y: 5 },
+        spellDamage: '5d8',
+        spellDamageType: 'poison',
+        saveDC: 14,
+        saveAbility: 'con', // CON save, cover shouldn't help
+        halfOnSave: true,
+      });
+
+      expect(result.isError).toBeUndefined();
+      const text = getTextContent(result);
+      // Should NOT show (cover) for CON saves
+      expect(text).not.toMatch(/\(cover\)/);
+    });
+  });
 });

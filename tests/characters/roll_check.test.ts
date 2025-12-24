@@ -703,4 +703,229 @@ describe('roll_check', () => {
       expect(text).toContain('+5');
     });
   });
+
+  describe('roll_check during active encounter (CRITICAL-004)', () => {
+    let encounterId: string;
+    let encounterCharacterId: string;
+    const ENCOUNTER_DATA_DIR = path.join(getDataDir(), 'encounters');
+
+    beforeAll(async () => {
+      // Create character with stats and skill proficiencies for encounter testing
+      const charResult = await handleToolCall('create_character', {
+        name: 'Perception Tester',
+        class: 'Ranger',
+        level: 5,
+        stats: {
+          str: 10,  // +0
+          dex: 16,  // +3
+          con: 14,  // +2
+          int: 12,  // +1
+          wis: 16,  // +3
+          cha: 8,   // -1
+        },
+        skillProficiencies: ['perception', 'stealth'],
+        saveProficiencies: ['str', 'dex'],
+      });
+
+      const charText = getTextContent(charResult);
+      const charMatch = charText.match(/Character ID: ([a-z0-9-]+)/);
+      encounterCharacterId = charMatch![1];
+
+      // Create an encounter with this character as a participant
+      const encResult = await handleToolCall('create_encounter', {
+        participants: [
+          {
+            characterId: encounterCharacterId,
+            position: { x: 0, y: 0 }
+          },
+          {
+            id: 'goblin-scout',
+            name: 'Goblin Scout',
+            hp: 7,
+            maxHp: 7,
+            ac: 13,
+            position: { x: 5, y: 0 },
+            isEnemy: true
+          }
+        ]
+      });
+
+      const encText = getTextContent(encResult);
+      const encMatch = encText.match(/Encounter ID: ([a-z0-9-]+)/i) ||
+                       encText.match(/ID[:\s]+([a-z0-9-]+)/i) ||
+                       encText.match(/([a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12})/i);
+      encounterId = encMatch![1];
+    });
+
+    afterAll(async () => {
+      // End the encounter and clean up
+      try {
+        await handleToolCall('end_encounter', {
+          encounterId: encounterId,
+          outcome: 'victory',
+        });
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+
+      // Clean up encounter data
+      if (fs.existsSync(ENCOUNTER_DATA_DIR)) {
+        const files = fs.readdirSync(ENCOUNTER_DATA_DIR);
+        for (const file of files) {
+          const filePath = path.join(ENCOUNTER_DATA_DIR, file);
+          try {
+            fs.unlinkSync(filePath);
+          } catch (err) {
+            // Ignore errors
+          }
+        }
+      }
+
+      // Clean up the test character
+      try {
+        await handleToolCall('delete_character', {
+          characterId: encounterCharacterId,
+        });
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+    });
+
+    it('should make skill check for character in active encounter by characterId', async () => {
+      // Use characterId to roll a skill check while character is in an active encounter
+      const result = await handleToolCall('roll_check', {
+        characterId: encounterCharacterId,
+        checkType: 'skill',
+        skill: 'perception', // Proficient, WIS-based (+3) + proficiency (+3 at level 5) = +6
+      });
+
+      const text = getTextContent(result);
+      
+      // Character should be found, not error
+      expect(result.isError).toBeUndefined();
+      expect(text).not.toMatch(/not found|error|invalid/i);
+      
+      // Should contain character name and skill
+      expect(text).toContain('Perception Tester');
+      expect(text).toContain('Perception');
+      
+      // Should include correct modifier (+3 WIS + +3 proficiency = +6)
+      expect(text).toContain('+6');
+    });
+
+    it('should make ability check for character in active encounter', async () => {
+      // Roll raw ability check (not skill) while character is in active encounter
+      const result = await handleToolCall('roll_check', {
+        characterId: encounterCharacterId,
+        checkType: 'ability',
+        ability: 'dex', // +3 modifier
+      });
+
+      const text = getTextContent(result);
+      
+      // Character should be found
+      expect(result.isError).toBeUndefined();
+      expect(text).not.toMatch(/not found|error|invalid/i);
+      
+      // Should show character name and ability
+      expect(text).toContain('Perception Tester');
+      expect(text).toContain('DEX');
+      
+      // Modifier should be just the ability modifier (+3), no proficiency
+      expect(text).toContain('+3');
+    });
+
+    it('should find character by characterName during active encounter', async () => {
+      // Use characterName instead of characterId while in encounter
+      const result = await handleToolCall('roll_check', {
+        characterName: 'Perception Tester',
+        checkType: 'skill',
+        skill: 'stealth', // Proficient, DEX-based (+3) + proficiency (+3) = +6
+      });
+
+      const text = getTextContent(result);
+      
+      // Character should be found by name
+      expect(result.isError).toBeUndefined();
+      expect(text).not.toMatch(/not found|error|invalid/i);
+      
+      // Should show character name and skill
+      expect(text).toContain('Perception Tester');
+      expect(text).toContain('Stealth');
+    });
+
+    it('should apply proficiency to proficient skills during encounter', async () => {
+      // Roll a proficient skill (perception) - should include proficiency bonus
+      const proficientResult = await handleToolCall('roll_check', {
+        characterId: encounterCharacterId,
+        checkType: 'skill',
+        skill: 'perception', // Proficient: +3 WIS + +3 proficiency = +6
+      });
+      const proficientText = getTextContent(proficientResult);
+      
+      // Roll a non-proficient skill (athletics) - should NOT include proficiency
+      const nonProficientResult = await handleToolCall('roll_check', {
+        characterId: encounterCharacterId,
+        checkType: 'skill',
+        skill: 'athletics', // Not proficient: +0 STR only
+      });
+      const nonProficientText = getTextContent(nonProficientResult);
+      
+      // Both should succeed (character found)
+      expect(proficientResult.isError).toBeUndefined();
+      expect(nonProficientResult.isError).toBeUndefined();
+      
+      expect(proficientText).not.toMatch(/not found|error|invalid/i);
+      expect(nonProficientText).not.toMatch(/not found|error|invalid/i);
+      
+      // Perception should show +6 (proficient)
+      expect(proficientText).toContain('+6');
+      
+      // Athletics should show +0 (not proficient, STR is 10)
+      expect(nonProficientText).toContain('+0');
+    });
+
+    it('should make saving throw for character in active encounter', async () => {
+      // Roll a saving throw while character is in encounter
+      const result = await handleToolCall('roll_check', {
+        characterId: encounterCharacterId,
+        checkType: 'save',
+        ability: 'dex', // Proficient: +3 DEX + +3 proficiency = +6
+      });
+
+      const text = getTextContent(result);
+      
+      // Character should be found
+      expect(result.isError).toBeUndefined();
+      expect(text).not.toMatch(/not found|error|invalid/i);
+      
+      // Should show character name and save type
+      expect(text).toContain('Perception Tester');
+      expect(text).toContain('DEX');
+      expect(text).toContain('Save');
+      
+      // Should include proficiency since DEX save is proficient
+      expect(text).toContain('+6');
+    });
+
+    it('should work with DC check for character in active encounter', async () => {
+      // Roll a skill check against a DC while in encounter
+      const result = await handleToolCall('roll_check', {
+        characterId: encounterCharacterId,
+        checkType: 'skill',
+        skill: 'perception',
+        dc: 15,
+      });
+
+      const text = getTextContent(result);
+      
+      // Character should be found
+      expect(result.isError).toBeUndefined();
+      expect(text).not.toMatch(/not found|error|invalid/i);
+      
+      // Should show DC and result
+      expect(text).toContain('DC 15');
+      expect(text).toMatch(/Success|Failure|✓|✗/);
+    });
+  });
 });

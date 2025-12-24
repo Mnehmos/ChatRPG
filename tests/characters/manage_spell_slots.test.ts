@@ -557,11 +557,12 @@ describe('manage_spell_slots', () => {
       // Create encounter with wizard
       const characterId = await createSpellcaster({ name: 'Battle Mage' });
       expect(characterId).not.toBeNull();
-      
+
       const encounterResult = await handleToolCall('create_encounter', {
         name: 'Spell Test',
         participants: [
-          { id: characterId, name: 'Battle Mage', hp: 30, maxHp: 30, position: { x: 0, y: 0 } },
+          // Use characterId field to link to persistent character for spell slot tracking
+          { characterId: characterId, position: { x: 0, y: 0 } },
           { id: 'enemy1', name: 'Goblin', hp: 7, maxHp: 7, position: { x: 5, y: 0 } },
         ],
       });
@@ -596,7 +597,7 @@ describe('manage_spell_slots', () => {
     it('should fail to cast spell without available slot', async () => {
       const characterId = await createSpellcaster({ name: 'Depleted Mage', level: 1 });
       expect(characterId).not.toBeNull();
-      
+
       // Expend all 1st level slots (level 1 wizard has 2)
       await handleToolCall('manage_spell_slots', {
         characterId,
@@ -604,11 +605,12 @@ describe('manage_spell_slots', () => {
         slotLevel: 1,
         count: 2,
       });
-      
+
       const encounterResult = await handleToolCall('create_encounter', {
         name: 'No Slots Test',
         participants: [
-          { id: characterId, name: 'Depleted Mage', hp: 20, maxHp: 20, position: { x: 0, y: 0 } },
+          // Use characterId field to link to persistent character for spell slot tracking
+          { characterId: characterId, position: { x: 0, y: 0 } },
           { id: 'enemy1', name: 'Goblin', hp: 7, maxHp: 7, position: { x: 5, y: 0 } },
         ],
       });
@@ -634,11 +636,12 @@ describe('manage_spell_slots', () => {
     it('should allow upcasting with higher level slot', async () => {
       const characterId = await createSpellcaster({ name: 'Upcaster' });
       expect(characterId).not.toBeNull();
-      
+
       const encounterResult = await handleToolCall('create_encounter', {
         name: 'Upcast Test',
         participants: [
-          { id: characterId, name: 'Upcaster', hp: 30, maxHp: 30, position: { x: 0, y: 0 } },
+          // Use characterId field to link to persistent character for spell slot tracking
+          { characterId: characterId, position: { x: 0, y: 0 } },
           { id: 'enemy1', name: 'Goblin', hp: 7, maxHp: 7, position: { x: 5, y: 0 } },
         ],
       });

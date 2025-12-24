@@ -12,6 +12,25 @@ import { randomUUID } from 'crypto';
 import { createBox, centerText, BOX } from './ascii-art.js';
 import { getCharacter } from './characters.js';
 import { fuzzyEnum } from '../fuzzy-enum.js';
+import {
+  LocationNode,
+  LocationEdge,
+  LocationGraph,
+  LocationType,
+  LocationTypeSchema,
+  Light,
+  LightSchema,
+  TerrainType,
+  TerrainTypeSchema,
+  Size,
+  SizeSchema,
+  ConnectionType,
+  ConnectionTypeSchema,
+  PartyMember,
+  PartyState,
+  PartyRole,
+  PartyRoleSchema,
+} from '../types.js';
 
 // ============================================================
 // CONSTANTS
@@ -33,56 +52,6 @@ const BULLET = 'â€¢';
 // SCHEMAS
 // ============================================================
 
-/** Valid lighting values */
-const LIGHTING_VALUES = ['bright', 'dim', 'darkness'] as const;
-/** Lighting levels for locations (fuzzy matching) */
-const LightingSchema = fuzzyEnum(LIGHTING_VALUES, 'lighting');
-
-/** Valid location type values */
-const LOCATION_TYPE_VALUES = [
-  'town',
-  'dungeon',
-  'wilderness',
-  'indoor',
-  'outdoor',
-  'underground',
-  'planar',
-  'other',
-] as const;
-/** Location types for classification (fuzzy matching) */
-const LocationTypeSchema = fuzzyEnum(LOCATION_TYPE_VALUES, 'locationType');
-
-/** Valid size values */
-const SIZE_VALUES = ['tiny', 'small', 'medium', 'large', 'huge', 'gargantuan'] as const;
-/** Size classifications for locations (fuzzy matching) */
-const LocationSizeSchema = fuzzyEnum(SIZE_VALUES, 'size');
-
-/** Valid terrain values */
-const TERRAIN_VALUES = [
-  'urban',
-  'forest',
-  'mountain',
-  'desert',
-  'swamp',
-  'arctic',
-  'coastal',
-  'underground',
-  'planar',
-  'other',
-] as const;
-/** Terrain types (fuzzy matching) */
-const TerrainSchema = fuzzyEnum(TERRAIN_VALUES, 'terrain');
-
-/** Connection types between locations */
-const ConnectionTypeSchema = fuzzyEnum([
-  'door',
-  'passage',
-  'stairs',
-  'ladder',
-  'portal',
-  'hidden',
-]);
-
 /** Operation types for manage_location */
 const LocationOperationSchema = fuzzyEnum([
   'create',
@@ -99,38 +68,20 @@ const LocationOperationSchema = fuzzyEnum([
 // ============================================================
 
 /**
- * Represents a location node in the graph
+ * Extended location node with persistence timestamps.
+ * Extends LocationNode from types.ts with createdAt/updatedAt.
  */
-interface Location {
-  id: string;
-  name: string;
-  description: string;
-  locationType?: z.infer<typeof LocationTypeSchema>;
-  lighting?: z.infer<typeof LightingSchema>;
-  hazards?: string[];
-  tags?: string[];
-  terrain?: z.infer<typeof TerrainSchema>;
-  size?: z.infer<typeof LocationSizeSchema>;
-  discovered: boolean;
-  properties?: Record<string, unknown>;
+interface Location extends LocationNode {
   createdAt: number;
   updatedAt: number;
 }
 
 /**
- * Represents an edge/connection between locations
+ * Extended location edge with ID for persistence.
+ * Extends LocationEdge from types.ts with id field.
  */
-interface LocationEdge {
+interface StoredLocationEdge extends LocationEdge {
   id: string;
-  fromLocationId: string;
-  toLocationId: string;
-  connectionType: z.infer<typeof ConnectionTypeSchema>;
-  locked: boolean;
-  lockDC?: number;
-  hidden: boolean;
-  findDC?: number;
-  oneWay: boolean;
-  description?: string;
 }
 
 // ============================================================
@@ -141,7 +92,7 @@ interface LocationEdge {
 const locationStore = new Map<string, Location>();
 
 /** In-memory edge storage */
-const edgeStore = new Map<string, LocationEdge>();
+const edgeStore = new Map<string, StoredLocationEdge>();
 
 // ============================================================
 // HELPER FUNCTIONS
@@ -168,10 +119,10 @@ function findLocation(idOrName: string): Location | undefined {
 /**
  * Get all edges connected to a location
  */
-function getEdgesForLocation(locationId: string): LocationEdge[] {
-  const edges: LocationEdge[] = [];
+function getEdgesForLocation(locationId: string): StoredLocationEdge[] {
+  const edges: StoredLocationEdge[] = [];
   for (const edge of edgeStore.values()) {
-    if (edge.fromLocationId === locationId || edge.toLocationId === locationId) {
+    if (edge.fromId === locationId || edge.toId === locationId) {
       edges.push(edge);
     }
   }
@@ -181,8 +132,8 @@ function getEdgesForLocation(locationId: string): LocationEdge[] {
 /**
  * Get the other end of an edge from a given location
  */
-function getConnectedLocationId(edge: LocationEdge, fromLocationId: string): string {
-  return edge.fromLocationId === fromLocationId ? edge.toLocationId : edge.fromLocationId;
+function getConnectedLocationId(edge: StoredLocationEdge, fromLocationId: string): string {
+  return edge.fromId === fromLocationId ? edge.toId : edge.fromId;
 }
 
 /**
@@ -191,8 +142,8 @@ function getConnectedLocationId(edge: LocationEdge, fromLocationId: string): str
 function linkExists(fromId: string, toId: string): boolean {
   for (const edge of edgeStore.values()) {
     if (
-      (edge.fromLocationId === fromId && edge.toLocationId === toId) ||
-      (edge.fromLocationId === toId && edge.toLocationId === fromId)
+      (edge.fromId === fromId && edge.toId === toId) ||
+      (edge.fromId === toId && edge.toId === fromId)
     ) {
       return true;
     }
@@ -203,11 +154,11 @@ function linkExists(fromId: string, toId: string): boolean {
 /**
  * Find edge between two locations
  */
-function findEdge(fromId: string, toId: string): LocationEdge | undefined {
+function findEdge(fromId: string, toId: string): StoredLocationEdge | undefined {
   for (const edge of edgeStore.values()) {
     if (
-      (edge.fromLocationId === fromId && edge.toLocationId === toId) ||
-      (edge.fromLocationId === toId && edge.toLocationId === fromId)
+      (edge.fromId === fromId && edge.toId === toId) ||
+      (edge.fromId === toId && edge.toId === fromId)
     ) {
       return edge;
     }
@@ -221,7 +172,7 @@ function findEdge(fromId: string, toId: string): LocationEdge | undefined {
 function removeEdgesForLocation(locationId: string): void {
   const edgesToRemove: string[] = [];
   for (const [id, edge] of edgeStore.entries()) {
-    if (edge.fromLocationId === locationId || edge.toLocationId === locationId) {
+    if (edge.fromId === locationId || edge.toId === locationId) {
       edgesToRemove.push(id);
     }
   }
@@ -239,11 +190,11 @@ const createOperationSchema = z.object({
   name: z.string().min(1).max(MAX_NAME_LENGTH),
   description: z.string().optional().default(''),
   locationType: LocationTypeSchema.optional(),
-  lighting: LightingSchema.optional(),
+  lighting: LightSchema.optional(),
   hazards: z.array(z.string()).optional(),
   tags: z.array(z.string()).optional(),
-  terrain: TerrainSchema.optional(),
-  size: LocationSizeSchema.optional(),
+  terrain: TerrainTypeSchema.optional(),
+  size: SizeSchema.optional(),
   discovered: z.boolean().optional().default(true),
   properties: z.record(z.unknown()).optional(),
 });
@@ -260,11 +211,11 @@ const updateOperationSchema = z.object({
   name: z.string().optional(),
   description: z.string().optional(),
   locationType: LocationTypeSchema.optional(),
-  lighting: LightingSchema.optional(),
+  lighting: LightSchema.optional(),
   hazards: z.array(z.string()).optional(),
   tags: z.array(z.string()).optional(),
-  terrain: TerrainSchema.optional(),
-  size: LocationSizeSchema.optional(),
+  terrain: TerrainTypeSchema.optional(),
+  size: SizeSchema.optional(),
   discovered: z.boolean().optional(),
   properties: z.record(z.unknown()).optional(),
 });
@@ -326,14 +277,14 @@ function handleCreate(input: z.infer<typeof createOperationSchema>): string {
     id,
     name: input.name,
     description: input.description || '',
-    locationType: input.locationType,
-    lighting: input.lighting,
-    hazards: input.hazards,
-    tags: input.tags,
+    locationType: input.locationType || 'room',
+    lighting: input.lighting || 'dim',
+    hazards: input.hazards || [],
+    tags: input.tags || [],
     terrain: input.terrain,
     size: input.size,
     discovered: input.discovered ?? true,
-    properties: input.properties,
+    properties: input.properties || {},
     createdAt: now,
     updatedAt: now,
   };
@@ -461,7 +412,7 @@ function handleGet(input: z.infer<typeof getOperationSchema>): string {
       if (edge.hidden) {
         connStr += ` [hidden]`;
       }
-      if (edge.oneWay && edge.fromLocationId !== location.id) {
+      if (edge.oneWay && edge.fromId !== location.id) {
         connStr += ` [one-way from]`;
       } else if (edge.oneWay) {
         connStr += ` [one-way to]`;
@@ -611,10 +562,10 @@ function handleLink(input: z.infer<typeof linkOperationSchema>): string {
   }
 
   const edgeId = randomUUID();
-  const edge: LocationEdge = {
+  const edge: StoredLocationEdge = {
     id: edgeId,
-    fromLocationId: fromLocation.id,
-    toLocationId: toLocation.id,
+    fromId: fromLocation.id,
+    toId: toLocation.id,
     connectionType: input.connectionType || 'passage',
     locked: input.locked || false,
     lockDC: input.lockDC,
@@ -783,18 +734,18 @@ export async function manageLocation(input: unknown): Promise<{ content: { type:
 }
 
 // ============================================================
-// PARTY STATE
+// PARTY LOCATION STATE
 // ============================================================
 
-/** Party location state */
-interface PartyState {
+/** Party location state (for tracking party movement through locations) */
+interface PartyLocationState {
   currentLocationId: string | null;
   history: { locationId: string; timestamp: number }[];
   discoveredHiddenEdges: Set<string>;
 }
 
-/** In-memory party state */
-let partyState: PartyState = {
+/** In-memory party location state */
+let partyState: PartyLocationState = {
   currentLocationId: null,
   history: [],
   discoveredHiddenEdges: new Set(),
@@ -842,11 +793,11 @@ export const movePartySchema = z.union([
 /**
  * Get edge between current location and target
  */
-function getEdgeBetween(fromId: string, toId: string): LocationEdge | undefined {
+function getEdgeBetween(fromId: string, toId: string): StoredLocationEdge | undefined {
   for (const edge of edgeStore.values()) {
     if (
-      (edge.fromLocationId === fromId && edge.toLocationId === toId) ||
-      (!edge.oneWay && edge.fromLocationId === toId && edge.toLocationId === fromId)
+      (edge.fromId === fromId && edge.toId === toId) ||
+      (!edge.oneWay && edge.fromId === toId && edge.toId === fromId)
     ) {
       return edge;
     }
@@ -857,9 +808,9 @@ function getEdgeBetween(fromId: string, toId: string): LocationEdge | undefined 
 /**
  * Check if edge is traversable from current location
  */
-function isEdgeTraversable(edge: LocationEdge, fromId: string): boolean {
+function isEdgeTraversable(edge: StoredLocationEdge, fromId: string): boolean {
   // One-way check
-  if (edge.oneWay && edge.fromLocationId !== fromId) {
+  if (edge.oneWay && edge.fromId !== fromId) {
     return false;
   }
   return true;
@@ -1006,10 +957,10 @@ function getExitsForLocation(locationId: string, showHidden: boolean): Exit[] {
     let targetId: string | null = null;
 
     // Check if this edge connects from current location
-    if (edge.fromLocationId === locationId) {
-      targetId = edge.toLocationId;
-    } else if (edge.toLocationId === locationId && !edge.oneWay) {
-      targetId = edge.fromLocationId;
+    if (edge.fromId === locationId) {
+      targetId = edge.toId;
+    } else if (edge.toId === locationId && !edge.oneWay) {
+      targetId = edge.fromId;
     }
 
     if (targetId) {
@@ -1161,25 +1112,6 @@ export async function moveParty(input: unknown): Promise<{ content: { type: 'tex
 // MANAGE_PARTY
 // ============================================================
 
-/** Party role types */
-const PartyRoleSchema = fuzzyEnum([
-  'leader',
-  'scout',
-  'healer',
-  'tank',
-  'support',
-  'damage',
-  'utility',
-  'other',
-]);
-
-/** Party member data */
-interface PartyMember {
-  characterId: string;
-  role?: z.infer<typeof PartyRoleSchema>;
-  addedAt: number;
-}
-
 /** In-memory party member storage */
 const partyMemberStore = new Map<string, PartyMember>();
 
@@ -1305,17 +1237,18 @@ function handlePartyAdd(input: z.infer<typeof addPartyOperationSchema>): string 
     return createBox('ERROR', [`${name} is already in the party.`], DISPLAY_WIDTH);
   }
 
-  // Add to party
-  const member: PartyMember = {
-    characterId: resolved.id,
-    role: input.role,
-    addedAt: Date.now(),
-  };
-  partyMemberStore.set(resolved.id, member);
-
   // Get character info for display
   const charResult = getCharacter({ characterId: resolved.id });
   const character = charResult.character;
+
+  // Add to party
+  const member: PartyMember = {
+    characterId: resolved.id,
+    characterName: character?.name || resolved.id,
+    role: input.role,
+    joinedAt: new Date().toISOString(),
+  };
+  partyMemberStore.set(resolved.id, member);
 
   const lines: string[] = [];
   lines.push(`Name: ${character?.name || resolved.id}`);
