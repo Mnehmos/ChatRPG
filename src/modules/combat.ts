@@ -4441,7 +4441,7 @@ export const renderBattlefieldSchema = z.object({
 export type RenderBattlefieldInput = z.input<typeof renderBattlefieldSchema>;
 
 /** Legend detail level type */
-export type LegendDetailLevel = 'minimal' | 'standard' | 'detailed';
+export type LegendDetailLevel = 'minimal' | 'summary' | 'standard' | 'detailed';
 
 // ─────────────────────────────────────────────────────────────
 // BATTLEFIELD CONSTANTS
