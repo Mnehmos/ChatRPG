@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ChatRPG - D&D 5e Assistant</title>
+    <link rel="stylesheet" href="css/style.css?v=7" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>ChatRPG</h1>
+        <p class="subtitle">Your D&D 5e Campaign Assistant</p>
+        <div class="connection-status" id="connection-status">
+          <span class="status-indicator"></span>
+          <span class="status-text">Connecting...</span>
+        </div>
+        <div class="model-selector">
+          <label for="model-select">Model:</label>
+          <select id="model-select">
+            <option value="openrouter-oss" selected>OpenRouter (gpt-oss-120b)</option>
+            <option value="openai">OpenAI (gpt-5-nano)</option>
+            <option value="openrouter-nemotron">OpenRouter (Nemotron 30B)</option>
+          </select>
+        </div>
+      </header>
+
+      <div class="chat-container">
+        <div class="messages" id="messages">
+          <div class="message assistant">
+            <div class="message-content">
+              <p>Welcome to ChatRPG! I'm your D&D 5e assistant.</p>
+              <p>Try asking me to:</p>
+              <ul>
+                <li>
+                  Create a character: "Create a level 5 elf wizard named Elara"
+                </li>
+                <li>Start combat: "Create an encounter with 2 goblins"</li>
+                <li>Roll checks: "Roll a stealth check for my rogue"</li>
+                <li>Manage inventory: "Add a longsword to my inventory"</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="input-container">
+          <div class="typing-indicator" id="typing-indicator">
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+            <span class="typing-text">Generating response...</span>
+          </div>
+          <textarea
+            id="user-input"
+            placeholder="Ask me anything about your D&D campaign..."
+            rows="2"
+          ></textarea>
+          <button id="send-button" disabled>
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M2 10l16-8-8 16-2-8-6-2z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <footer>
+        <p>
+          Powered by ChatRPG MCP Server •
+          <a href="https://github.com/Mnehmos/ChatRPG" target="_blank"
+            >GitHub</a
+          >
+        </p>
+      </footer>
+    </div>
+
+    <!-- Config is injected by build process -->
+    <script>
+      window.CHATRPG_CONFIG = {
+        mcpServerUrl: "{{MCP_SERVER_URL}}",
+        openaiApiKey: "{{OPENAI_API_KEY}}",
+        openrouterApiKey: "{{OPENROUTER_API_KEY}}",
+      };
+    </script>
+    <script src="js/app.js?v=16"></script>
+  </body>
+</html>

@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test:*)",
+      "Bash(mkdir:*)",
+      "Bash(npm run build:*)",
+      "Bash(node -e \"import(''./dist/registry.js'').then(m => m.handleToolCall(''create_character'', {name: ''Test Hero'', class: ''Wizard'', level: 3})).then(r => console.log(r.content[0].text))\")",
+      "Bash(node -e \"import(''./src/registry.js'').then(m => m.handleToolCall(''create_character'', {name: ''Test'', class: ''Fighter'', level: 1})).then(r => console.log(r.content[0].text))\")",
+      "Bash(npx tsc --noEmit)",
+      "Bash(dir /T:W /O:-D testscombatmanage_condition.test.ts testscharactersget_character.test.ts)",
+      "Bash(dir:*)",
+      "Bash(node:*)",
+      "Bash(cat:*)",
+      "Bash(npx vitest:*)",
+      "Bash(npx tsc)",
+      "Bash(chmod:*)",
+      "Bash(git pull:*)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nfeat(web-client): add OpenRouter model switching with deepinfra/fp4 support\n\nAdd model selector dropdown allowing users to switch between OpenAI (gpt-5-nano)\nand OpenRouter (deepinfra/fp4) at runtime. OpenRouter integration fetches MCP\ntools from the server and executes them manually since it doesn''t support\nnative MCP.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(gh api:*)",
+      "Bash(git fetch:*)",
+      "Bash(gh workflow run:*)",
+      "Bash(curl:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh repo view:*)",
+      "Bash(gh issue close:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

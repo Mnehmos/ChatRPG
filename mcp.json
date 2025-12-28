@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "rpg-lite-mcp": {
+      "command": "node",
+      "args": ["dist/index.js"],
+      "cwd": "c:\\Users\\mnehm\\AppData\\Roaming\\Roo-Code\\MCP\\rpg-lite-mcp"
+    }
+  }
+}
